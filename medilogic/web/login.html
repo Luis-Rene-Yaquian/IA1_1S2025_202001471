@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Login — Admin</title>
+  <style>
+    body{font-family:system-ui,Arial;margin:0;padding:24px;background:#f7f9ff;color:#0f172a}
+    .card{max-width:380px;margin:10vh auto;padding:24px;background:#fff;border:1px solid #e2e8f0;border-radius:12px}
+    input,button{width:100%;padding:10px;margin-top:10px;font-size:16px}
+    .err{color:#b00;margin-top:8px}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>Administrador</h2>
+    <form id="f">
+      <input id="u" placeholder="Usuario" autocomplete="username" required/>
+      <input id="p" type="password" placeholder="Contraseña" autocomplete="current-password" required/>
+      <button type="submit">Ingresar</button>
+    </form>
+    <div id="e" class="err"></div>
+    <p style="font-size:12px;color:#475569">Predeterminado: admin / 123456 (cámbialo con variables de entorno).</p>
+  </div>
+
+<script>
+document.getElementById('f').addEventListener('submit', async (e)=>{
+  e.preventDefault();
+  const u = document.getElementById('u').value.trim();
+  const p = document.getElementById('p').value;
+  const err = document.getElementById('e'); err.textContent="";
+  try{
+    const res = await fetch('/auth/login', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({username:u, password:p})
+    });
+    if(!res.ok){
+      err.textContent = 'Credenciales inválidas';
+      return;
+    }
+    window.location.href = '/admin';
+  }catch(_){
+    err.textContent = 'Error de red';
+  }
+});
+</script>
+</body>
+</html>
