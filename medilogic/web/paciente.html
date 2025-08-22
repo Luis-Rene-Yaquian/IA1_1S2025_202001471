@@ -6,17 +6,164 @@
   <title>Paciente</title>
   <style>
     body{font-family:system-ui,Arial;margin:0;padding:24px;background:#f7f9ff;color:#0f172a}
-    .wrap{max-width:800px;margin:auto}
+    .wrap{max-width:1000px;margin:auto}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
     .box{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:16px}
+    table{width:100%;border-collapse:collapse}
+    th,td{border-bottom:1px solid #e2e8f0;padding:8px;text-align:left}
+    .tags{font-size:12px;color:#475569}
+    .btn{padding:10px 14px;border:1px solid #94a3b8;border-radius:10px;background:#fff;cursor:pointer}
+    .muted{color:#64748b;font-size:12px}
+    textarea,input,select{width:100%;padding:8px}
+    #chart{width:100%;height:220px;border:1px dashed #cbd5e1;border-radius:8px}
   </style>
 </head>
 <body>
   <div class="wrap">
     <h1>Paciente</h1>
-    <div class="box">
-      <p>Formulario de síntomas/alergias aparecerá aquí. (MVP)</p>
-      <p><a href="/">← Volver</a></p>
+    <div class="grid">
+      <div class="box">
+        <h3>Ingresar datos</h3>
+        <form id="f" onsubmit="return false;">
+          <p class="muted">Seleccione síntomas presentes y su severidad.</p>
+          <table>
+            <thead><tr><th>Síntoma</th><th>Presente</th><th>Severidad</th></tr></thead>
+            <tbody id="symRows"></tbody>
+          </table>
+          <p><strong>Alergias (coma separadas):</strong><br><input id="allergies" placeholder="alergia_penicilina, alergia_paracetamol"></p>
+          <p><strong>Enfermedades crónicas (coma separadas):</strong><br><input id="chronics" placeholder="asma, ulcera_gastrica"></p>
+          <button class="btn" id="analyze">Analizar</button>
+        </form>
+      </div>
+      <div class="box">
+        <h3>Resultados</h3>
+        <div id="resultsWrap" class="muted">Sin resultados aún.</div>
+        <canvas id="chart"></canvas>
+        <div style="margin-top:8px;display:flex;gap:8px">
+          <button class="btn" id="savePdf">Descargar PDF</button>
+          <button class="btn" id="clearHist">Limpiar historial</button>
+        </div>
+      </div>
     </div>
+    <div class="box" style="margin-top:16px">
+      <h3>Historial de esta sesión</h3>
+      <div id="history" class="muted">Sin análisis previos.</div>
+    </div>
+    <p><a href="/">← Volver</a></p>
   </div>
+
+<script>
+const SYMPTOMS = ["fiebre","tos","dolor_garganta","disnea","dolor_pecho","cefalea","nausea"];
+const SEVERITY = ["leve","moderado","severo"];
+const tbody = document.getElementById('symRows');
+SYMPTOMS.forEach(s => {
+  const tr = document.createElement('tr');
+  tr.innerHTML = `
+    <td>${s}</td>
+    <td><input type="checkbox" data-id="${s}" class="present"></td>
+    <td>
+      <select class="severity" data-id="${s}">
+        ${SEVERITY.map(x=>'<option value="'+x+'">'+x+'</option>').join('')}
+      </select>
+    </td>`;
+  tbody.appendChild(tr);
+});
+
+function collectForm(){
+  const rows = [];
+  document.querySelectorAll('.present').forEach(cb => {
+    const id = cb.getAttribute('data-id');
+    const sel = document.querySelector('.severity[data-id="'+id+'"]');
+    rows.push({id, present: cb.checked, severity: sel.value});
+  });
+  const allergies = document.getElementById('allergies').value.split(',').map(x=>x.trim()).filter(Boolean);
+  const chronics  = document.getElementById('chronics').value.split(',').map(x=>x.trim()).filter(Boolean);
+  return { symptoms: rows, allergies, chronics };
+}
+
+document.getElementById('analyze').addEventListener('click', async ()=>{
+  const payload = collectForm();
+  const res = await fetch('/api/diagnose', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(payload)
+  });
+  const data = await res.json();
+  renderResults(data);
+  pushHistory(payload, data);
+  renderHistory();
+});
+
+function renderResults(data){
+  const w = document.getElementById('resultsWrap');
+  if(!data || !data.diagnoses?.length){ w.textContent = 'Sin coincidencias.'; return; }
+  const rows = data.diagnoses.map(d=> `
+    <tr>
+      <td><strong>${d.disease}</strong><br><span class="muted">Reglas: ${(d.rules_fired||[]).join(', ')}</span></td>
+      <td>${d.affinity}%</td>
+      <td>${d.suggested_drug || '<span class="muted">N/A</span>'}</td>
+      <td>${d.urgency}</td>
+      <td>${(d.warnings||[]).join(' • ')}</td>
+    </tr>`).join('');
+  w.innerHTML = `
+    <table>
+      <thead><tr><th>Enfermedad</th><th>Afinidad</th><th>Medicamento</th><th>Urgencia</th><th>Advertencias</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <p class="muted">${data.explanations || ''}</p>
+  `;
+  drawChart(data.diagnoses.slice(0,6));
+}
+
+function drawChart(list){
+  const c = document.getElementById('chart');
+  const ctx = c.getContext('2d');
+  const W = c.width = c.clientWidth || 800;
+  const H = c.height = 220;
+  ctx.clearRect(0,0,W,H);
+  if(!list.length){ return; }
+  const max = Math.max(...list.map(x=>x.affinity));
+  const barW = Math.max(24, (W-40)/list.length - 10);
+  list.forEach((d,i)=>{
+    const x = 20 + i*(barW+10);
+    const h = (d.affinity/max) * (H-50);
+    ctx.fillStyle = '#3b82f6';
+    ctx.fillRect(x, H-20-h, barW, h);
+    ctx.fillStyle = '#0f172a';
+    ctx.fillText(d.disease, x, H-6);
+    ctx.fillText(d.affinity + '%', x, H-26-h);
+  });
+}
+
+function pushHistory(req, resp){
+  const item = { at: new Date().toISOString(), req, resp };
+  const arr = JSON.parse(sessionStorage.getItem('hist')||'[]');
+  arr.unshift(item);
+  sessionStorage.setItem('hist', JSON.stringify(arr.slice(0,10)));
+}
+function renderHistory(){
+  const box = document.getElementById('history');
+  const arr = JSON.parse(sessionStorage.getItem('hist')||'[]');
+  if(!arr.length){ box.textContent = 'Sin análisis previos.'; return; }
+  box.innerHTML = arr.map(it=>{
+    const top = (it.resp?.diagnoses||[])[0];
+    const sum = top ? (top.disease + ' — ' + top.affinity + '%') : 'Sin resultado';
+    return '<div class="muted">• ' + new Date(it.at).toLocaleString() + ' → ' + sum + '</div>';
+  }).join('');
+}
+document.getElementById('clearHist').addEventListener('click', ()=>{
+  sessionStorage.removeItem('hist'); renderHistory();
+});
+document.getElementById('savePdf').addEventListener('click', ()=>{
+  const w = window.open('', '_blank', 'width=900,height=700');
+  w.document.write('<html><head><title>Informe</title></head><body>');
+  w.document.write('<h2>Informe de Diagnóstico</h2>');
+  w.document.write('<div>' + document.getElementById('resultsWrap').innerHTML + '</div>');
+  w.document.write('<p class="muted">Generado: ' + new Date().toLocaleString() + '</p>');
+  w.document.write('</body></html>');
+  w.document.close(); w.focus(); w.print();
+});
+window.addEventListener('DOMContentLoaded', renderHistory);
+</script>
 </body>
 </html>
