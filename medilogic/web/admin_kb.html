@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Gestor KB — Admin</title>
+  <style>
+    body{font-family:system-ui,Arial;margin:0;padding:24px;background:#f7f9ff;color:#0f172a}
+    .wrap{max-width:1100px;margin:auto}
+    .nav{display:flex;gap:8px;margin-bottom:16px}
+    .box{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:16px;margin-bottom:16px}
+    table{width:100%;border-collapse:collapse}
+    th,td{border-bottom:1px solid #e2e8f0;padding:8px;text-align:left;vertical-align:top}
+    input,select,textarea{width:100%;padding:8px}
+    .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    .btn{padding:9px 12px;border:1px solid #94a3b8;border-radius:10px;background:#fff;cursor:pointer}
+    .muted{color:#64748b;font-size:12px}
+    .pill{display:inline-block;border:1px solid #cbd5e1;border-radius:999px;padding:2px 8px;margin:0 6px 6px 0}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <div class="nav">
+    <a href="/admin" class="btn">← Volver al panel</a>
+    <div style="flex:1"></div>
+    <button id="save" class="btn">Guardar cambios</button>
+  </div>
+
+  <div class="box">
+    <h2>Síntomas</h2>
+    <div class="row">
+      <div>
+        <table id="tblSymptoms"><thead><tr><th>ID</th><th>Etiqueta</th><th></th></tr></thead><tbody></tbody></table>
+      </div>
+      <div>
+        <h4>Agregar/editar</h4>
+        <input id="symId" placeholder="id (ej. fiebre)"/>
+        <input id="symLabel" placeholder="Etiqueta (opcional)"/>
+        <div style="margin-top:8px">
+          <button class="btn" id="addSym">Guardar</button>
+          <button class="btn" id="delSym">Eliminar</button>
+        </div>
+        <p class="muted">Selecciona una fila para editar o elimina por ID.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="box">
+    <h2>Enfermedades</h2>
+    <div class="row">
+      <div>
+        <table id="tblDiseases"><thead><tr>
+          <th>ID</th><th>Nombre</th><th>Sistema</th><th>Tipo</th>
+        </tr></thead><tbody></tbody></table>
+      </div>
+      <div>
+        <h4>Agregar/editar</h4>
+        <input id="dzId" placeholder="id (ej. gripe)"/>
+        <input id="dzName" placeholder="Nombre legible (ej. Gripe)"/>
+        <input id="dzSystem" placeholder="Sistema (respiratorio, digestivo, ...)"/>
+        <input id="dzType" placeholder="Tipo (viral, crónico, inmunológico, ...)"/>
+        <textarea id="dzDesc" rows="3" placeholder="Descripción"></textarea>
+
+        <div style="margin-top:8px">
+          <label><strong>Síntomas asociados</strong></label>
+          <div id="dzSymList"></div>
+          <input id="dzSymAdd" placeholder="id de síntoma a asociar (enter)"/>
+        </div>
+
+        <div style="margin-top:8px">
+          <label><strong>Medicamentos contraindicados (para esta enfermedad)</strong></label>
+          <div id="dzContraMeds"></div>
+          <input id="dzContraMedAdd" placeholder="id de medicamento (enter)"/>
+        </div>
+
+        <div style="margin-top:8px">
+          <button class="btn" id="saveDz">Guardar</button>
+          <button class="btn" id="delDz">Eliminar</button>
+        </div>
+        <p class="muted">Selecciona una enfermedad de la tabla para editar sus campos.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="box">
+    <h2>Medicamentos</h2>
+    <div class="row">
+      <div>
+        <table id="tblMeds"><thead><tr><th>ID</th><th>Trata</th><th>Contraindicaciones</th></tr></thead><tbody></tbody></table>
+      </div>
+      <div>
+        <h4>Agregar/editar</h4>
+        <input id="medId" placeholder="id (ej. paracetamol)"/>
+        <input id="medLabel" placeholder="Etiqueta (opcional)"/>
+        <div style="margin-top:8px">
+          <label><strong>Trata (enfermedades)</strong></label>
+          <div id="medTreats"></div>
+          <input id="medTreatAdd" placeholder="id de enfermedad (enter)"/>
+        </div>
+        <div style="margin-top:8px">
+          <label><strong>Contra (alergias/condiciones)</strong></label>
+          <div id="medContra"></div>
+          <input id="medContraAdd" placeholder="ej. alergia_penicilina (enter)"/>
+        </div>
+
+        <div style="margin-top:8px">
+          <button class="btn" id="saveMed">Guardar</button>
+          <button class="btn" id="delMed">Eliminar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <p class="muted">Todos los cambios se guardan en <code>assets/kb/medilogic.pl</code> y quedan listos para el motor Prolog.</p>
+</div>
+
+<script>
+let SNAP = {symptoms:[], diseases:[], medications:[]};
+const $ = sel => document.querySelector(sel);
+const $$ = sel => Array.from(document.querySelectorAll(sel));
+
+async function loadSnap(){
+  const res = await fetch('/api/admin/snapshot');
+  if(!res.ok){ alert('No se pudo cargar la KB'); return; }
+  SNAP = await res.json();
+  renderAll();
+}
+
+/* ---------- Render tablas ---------- */
+function renderAll(){ renderSymptoms(); renderDiseases(); renderMeds(); }
+
+function renderSymptoms(){
+  const tb = $('#tblSymptoms tbody'); tb.innerHTML = '';
+  SNAP.symptoms.sort((a,b)=>a.id.localeCompare(b.id)).forEach(s=>{
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${s.id}</td><td>${s.label||''}</td><td><button class="btn" data-id="${s.id}" data-act="pick-sym">Editar</button></td>`;
+    tb.appendChild(tr);
+  });
+}
+
+function renderDiseases(){
+  const tb = $('#tblDiseases tbody'); tb.innerHTML = '';
+  SNAP.diseases.sort((a,b)=>a.id.localeCompare(b.id)).forEach(d=>{
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${d.id}</td><td>${d.name||''}</td><td>${d.system||''}</td><td>${d.type||''}</td>`;
+    tr.addEventListener('click', ()=>pickDisease(d.id));
+    tb.appendChild(tr);
+  });
+}
+
+function renderMeds(){
+  const tb = $('#tblMeds tbody'); tb.innerHTML = '';
+  SNAP.medications.sort((a,b)=>a.id.localeCompare(b.id)).forEach(m=>{
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${m.id}</td><td>${(m.treats||[]).join(', ')}</td><td>${(m.contra||[]).join(', ')}</td>`;
+    tr.addEventListener('click', ()=>pickMed(m.id));
+    tb.appendChild(tr);
+  });
+}
+
+/* ---------- Síntomas CRUD ---------- */
+$('#addSym').addEventListener('click', ()=>{
+  const id = $('#symId').value.trim().toLowerCase();
+  if(!id){ return alert('ID de síntoma requerido'); }
+  const idx = SNAP.symptoms.findIndex(s=>s.id===id);
+  const label = $('#symLabel').value.trim();
+  if(idx>=0){ SNAP.symptoms[idx].label = label; } else { SNAP.symptoms.push({id, label}); }
+  renderSymptoms();
+});
+$('#delSym').addEventListener('click', ()=>{
+  const id = $('#symId').value.trim().toLowerCase();
+  if(!id) return;
+  SNAP.symptoms = SNAP.symptoms.filter(s=>s.id!==id);
+  SNAP.diseases.forEach(d=> d.symptoms = (d.symptoms||[]).filter(s=>s!==id));
+  renderSymptoms(); renderDiseases();
+});
+$('#tblSymptoms').addEventListener('click', (e)=>{
+  const btn = e.target.closest('button[data-act="pick-sym"]');
+  if(!btn) return;
+  const id = btn.getAttribute('data-id');
+  const s = SNAP.symptoms.find(x=>x.id===id);
+  if(s){ $('#symId').value = s.id; $('#symLabel').value = s.label||''; }
+});
+
+/* ---------- Enfermedades CRUD ---------- */
+function pickDisease(id){
+  const d = SNAP.diseases.find(x=>x.id===id); if(!d) return;
+  $('#dzId').value = d.id; $('#dzName').value = d.name||''; $('#dzSystem').value=d.system||''; $('#dzType').value=d.type||''; $('#dzDesc').value=d.description||'';
+  renderPills('#dzSymList', d.symptoms||[], (val)=>{ d.symptoms = d.symptoms.filter(x=>x!==val); renderPills('#dzSymList', d.symptoms, ()=>{}); });
+  renderPills('#dzContraMeds', d.contra_meds||[], (val)=>{ d.contra_meds = d.contra_meds.filter(x=>x!==val); renderPills('#dzContraMeds', d.contra_meds, ()=>{}); });
+}
+$('#dzSymAdd').addEventListener('keydown', (e)=>{
+  if(e.key!=='Enter') return;
+  const id = $('#dzId').value.trim().toLowerCase(); if(!id) return alert('Primero selecciona/crea una enfermedad');
+  e.preventDefault();
+  const sym = e.target.value.trim().toLowerCase(); if(!sym) return;
+  let d = SNAP.diseases.find(x=>x.id===id); if(!d){ d={id, name:id, symptoms:[]}; SNAP.diseases.push(d); }
+  d.symptoms = Array.from(new Set([...(d.symptoms||[]), sym]));
+  e.target.value=''; pickDisease(id);
+});
+$('#dzContraMedAdd').addEventListener('keydown', (e)=>{
+  if(e.key!=='Enter') return;
+  const id = $('#dzId').value.trim().toLowerCase(); if(!id) return alert('Primero selecciona/crea una enfermedad');
+  e.preventDefault();
+  const med = e.target.value.trim().toLowerCase(); if(!med) return;
+  let d = SNAP.diseases.find(x=>x.id===id); if(!d){ d={id, name:id, contra_meds:[]}; SNAP.diseases.push(d); }
+  d.contra_meds = Array.from(new Set([...(d.contra_meds||[]), med]));
+  e.target.value=''; pickDisease(id);
+});
+$('#saveDz').addEventListener('click', ()=>{
+  const id = $('#dzId').value.trim().toLowerCase(); if(!id) return alert('ID requerido');
+  const idx = SNAP.diseases.findIndex(x=>x.id===id);
+  const d = {
+    id,
+    name: $('#dzName').value.trim(),
+    system: $('#dzSystem').value.trim().toLowerCase(),
+    type: $('#dzType').value.trim().toLowerCase(),
+    description: $('#dzDesc').value.trim(),
+    symptoms: readPills('#dzSymList'),
+    contra_meds: readPills('#dzContraMeds'),
+  };
+  if(idx>=0) SNAP.diseases[idx]=d; else SNAP.diseases.push(d);
+  renderDiseases();
+});
+$('#delDz').addEventListener('click', ()=>{
+  const id = $('#dzId').value.trim().toLowerCase(); if(!id) return;
+  SNAP.diseases = SNAP.diseases.filter(x=>x.id!==id);
+  renderDiseases();
+});
+
+/* ---------- Medicamentos CRUD ---------- */
+function pickMed(id){
+  const m = SNAP.medications.find(x=>x.id===id); if(!m) return;
+  $('#medId').value = m.id; $('#medLabel').value = m.label||'';
+  renderPills('#medTreats', m.treats||[], (val)=>{ m.treats = m.treats.filter(x=>x!==val); renderPills('#medTreats', m.treats, ()=>{}); });
+  renderPills('#medContra', m.contra||[], (val)=>{ m.contra = m.contra.filter(x=>x!==val); renderPills('#medContra', m.contra, ()=>{}); });
+}
+$('#medTreatAdd').addEventListener('keydown', (e)=>{
+  if(e.key!=='Enter') return; e.preventDefault();
+  const id = $('#medId').value.trim().toLowerCase(); if(!id) return alert('Primero selecciona/crea un medicamento');
+  const dz = e.target.value.trim().toLowerCase(); if(!dz) return;
+  let m = SNAP.medications.find(x=>x.id===id); if(!m){ m={id, treats:[]}; SNAP.medications.push(m); }
+  m.treats = Array.from(new Set([...(m.treats||[]), dz])); e.target.value=''; pickMed(id);
+});
+$('#medContraAdd').addEventListener('keydown', (e)=>{
+  if(e.key!=='Enter') return; e.preventDefault();
+  const id = $('#medId').value.trim().toLowerCase(); if(!id) return alert('Primero selecciona/crea un medicamento');
+  const c = e.target.value.trim().toLowerCase(); if(!c) return;
+  let m = SNAP.medications.find(x=>x.id===id); if(!m){ m={id, contra:[]}; SNAP.medications.push(m); }
+  m.contra = Array.from(new Set([...(m.contra||[]), c])); e.target.value=''; pickMed(id);
+});
+$('#saveMed').addEventListener('click', ()=>{
+  const id = $('#medId').value.trim().toLowerCase(); if(!id) return alert('ID requerido');
+  const idx = SNAP.medications.findIndex(x=>x.id===id);
+  const m = { id, label: $('#medLabel').value.trim(), treats: readPills('#medTreats'), contra: readPills('#medContra') };
+  if(idx>=0) SNAP.medications[idx]=m; else SNAP.medications.push(m);
+  renderMeds();
+});
+$('#delMed').addEventListener('click', ()=>{
+  const id = $('#medId').value.trim().toLowerCase(); if(!id) return;
+  SNAP.medications = SNAP.medications.filter(x=>x.id!==id);
+  SNAP.diseases.forEach(d=> d.contra_meds = (d.contra_meds||[]).filter(m=>m!==id));
+  renderMeds(); renderDiseases();
+});
+
+/* ---------- Utilidades UI ---------- */
+function renderPills(sel, arr, onDel){
+  const host = $(sel); host.innerHTML='';
+  (arr||[]).forEach(v=>{
+    const span = document.createElement('span'); span.className='pill'; span.textContent=v;
+    span.title='Click para eliminar'; span.style.cursor='pointer'; span.addEventListener('click', ()=> onDel(v));
+    host.appendChild(span);
+  });
+}
+function readPills(sel){
+  return $$(sel+' .pill').map(p=>p.textContent.trim()).filter(Boolean);
+}
+
+/* ---------- Guardar ---------- */
+$('#save').addEventListener('click', async ()=>{
+  SNAP.symptoms = dedupBy(SNAP.symptoms.filter(s=>s.id), x=>x.id);
+  SNAP.diseases = dedupBy(SNAP.diseases.filter(d=>d.id), x=>x.id).map(d=>({...d,
+    symptoms: Array.from(new Set(d.symptoms||[])),
+    contra_meds: Array.from(new Set(d.contra_meds||[])),
+  }));
+  SNAP.medications = dedupBy(SNAP.medications.filter(m=>m.id), x=>x.id).map(m=>({...m,
+    treats: Array.from(new Set(m.treats||[])),
+    contra: Array.from(new Set(m.contra||[])),
+  }));
+
+  const res = await fetch('/api/admin/snapshot', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(SNAP)});
+  alert(res.ok || res.status===204 ? '¡Guardado en medilogic.pl!' : 'Error guardando');
+});
+
+function dedupBy(arr, keyFn){
+  const map = new Map(); const out=[];
+  for(const it of arr){ const k = keyFn(it); if(!map.has(k)){ map.set(k,true); out.push(it);} }
+  return out;
+}
+
+window.addEventListener('DOMContentLoaded', loadSnap);
+</script>
+</body>
+</html>

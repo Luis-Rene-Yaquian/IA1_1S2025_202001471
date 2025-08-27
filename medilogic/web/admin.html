@@ -11,6 +11,7 @@
     button{padding:10px 14px}
     .box{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:16px}
     textarea{width:100%;font-family:ui-monospace,Consolas,monospace}
+    a.btn{display:inline-block;padding:10px 14px;border:1px solid #94a3b8;border-radius:10px;background:#fff;text-decoration:none;color:#0f172a}
   </style>
 </head>
 <body>
@@ -18,46 +19,38 @@
     <div class="nav">
       <a href="/" style="text-decoration:none">← Inicio</a>
       <div style="flex:1"></div>
+      <a class="btn" href="/admin/kb">Gestor de Base de Conocimiento</a>
       <button id="logout">Salir</button>
     </div>
     <div class="box">
       <h2>Panel de Administración</h2>
-      <h3>Base de Conocimiento (.pl)</h3>
+      <p>Usa el <a href="/admin/kb">Gestor de Base de Conocimiento</a> para crear/editar <em>enfermedades, síntomas, medicamentos</em> y sus relaciones sin tocar el archivo <code>.pl</code>.</p>
+      <h3>Exportar / Importar .pl (opcional)</h3>
       <div style="display:grid; gap:8px; margin:12px 0">
         <div>
           <button id="btnExport">Descargar .pl</button>
           <input id="filePl" type="file" accept=".pl,.txt" />
           <button id="btnImport">Subir .pl</button>
         </div>
-        <textarea id="plText" rows="12" placeholder="Aquí verás/editarás el .pl para importarlo..."></textarea>
+        <textarea id="plText" rows="10" placeholder="(Vista rápida)"></textarea>
       </div>
     </div>
   </div>
-
 <script>
 document.getElementById('logout').addEventListener('click', async ()=>{
-  await fetch('/auth/logout', {method:'POST'});
-  window.location.href = '/login';
+  await fetch('/auth/logout', {method:'POST'}); window.location.href='/login';
 });
-
-async function fetchPL(){
-  const res = await fetch('/api/kb/export');
-  if(!res.ok){ alert('No se pudo leer el .pl'); return; }
-  const t = await res.text();
-  document.getElementById('plText').value = t;
-}
+async function fetchPL(){ const res = await fetch('/api/kb/export'); if(res.ok){ document.getElementById('plText').value = await res.text(); } }
 document.getElementById('btnExport').addEventListener('click', async ()=>{
   const res = await fetch('/api/kb/export'); const t = await res.text();
-  const blob = new Blob([t], {type:'text/plain'});
-  const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
-  a.download = 'medilogic.pl'; a.click(); URL.revokeObjectURL(a.href);
+  const blob = new Blob([t], {type:'text/plain'}); const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = 'medilogic.pl'; a.click(); URL.revokeObjectURL(a.href);
 });
 document.getElementById('btnImport').addEventListener('click', async ()=>{
   const file = document.getElementById('filePl').files[0];
-  let text;
-  if(file){ text = await file.text(); } else { text = document.getElementById('plText').value; }
-  const res = await fetch('/api/kb/import', { method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'}, body: text });
-  if(res.ok || res.status===204){ alert('Base de conocimiento actualizada.'); } else { alert('Error subiendo .pl'); }
+  let text = file ? await file.text() : document.getElementById('plText').value;
+  const res = await fetch('/api/kb/import',{method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'}, body:text});
+  alert(res.ok || res.status===204 ? 'Base de conocimiento actualizada.' : 'Error subiendo .pl');
 });
 window.addEventListener('DOMContentLoaded', fetchPL);
 </script>
