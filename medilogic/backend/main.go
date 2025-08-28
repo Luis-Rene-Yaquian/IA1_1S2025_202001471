@@ -751,6 +751,20 @@ func handleAdminSnapshot(w http.ResponseWriter, r *http.Request) {
 
 
 
+func handlePublicSymptoms(w http.ResponseWriter, r *http.Request) {
+    snap, err := loadSnapshotFromPL()
+    if err != nil {
+        http.Error(w, "cannot load kb", http.StatusInternalServerError)
+        return
+    }
+    ids := make([]string, 0, len(snap.Symptoms))
+    for _, s := range snap.Symptoms {
+        ids = append(ids, s.ID)
+    }
+    sort.Strings(ids)
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(map[string]any{"symptoms": ids})
+}
 
 
 /* ===========================================================
