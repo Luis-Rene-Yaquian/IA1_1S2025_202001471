@@ -10,36 +10,29 @@ sintoma(fiebre).
 sintoma(nausea).
 sintoma(tos).
 
-% -- todas las enfermedades juntas
 enfermedad(faringitis, "Faringitis", respiratorio, bacteriano).
 enfermedad(gripe, "Gripe", respiratorio, viral).
-
-% -- todas las descripciones (si usas)
-% descripcion_enf(faringitis, "Inflamación de la faringe").
-% descripcion_enf(gripe, "Infección respiratoria aguda").
-
-% -- asociaciones síntoma-enfermedad
+enfermedad(sinusitis, "Sinusitis", respiratorio, bacteriano).
 enf_sintoma(faringitis, dolor_garganta).
 enf_sintoma(faringitis, fiebre).
 enf_sintoma(gripe, fiebre).
 enf_sintoma(gripe, tos).
 enf_sintoma(gripe, dolor_garganta).
-
-% -- contraindicaciones específicas por enfermedad (opcionales)
+enf_sintoma(sinusitis, dolor_senos).
+enf_sintoma(sinusitis, fiebre).
+enf_sintoma(sinusitis, cefalea).
 enf_contra_medicamento(faringitis, ibuprofeno).
 
-% -- todos los medicamentos
 medicamento(amoxicilina).
+medicamento(azitromicina).
 medicamento(ibuprofeno).
 medicamento(paracetamol).
-
-% -- tratamientos
 trata(amoxicilina, faringitis).
+trata(azitromicina, sinusitis).
 trata(ibuprofeno, gripe).
 trata(paracetamol, gripe).
-
-% -- contraindicaciones globales (alergias/crónicas)
 contraindicado(amoxicilina, alergia_penicilina).
 contraindicado(amoxicilina, ulcera_gastrica).
+contraindicado(azitromicina, prolongacion_qt).
 contraindicado(ibuprofeno, ulcera_gastrica).
 contraindicado(paracetamol, alergia_paracetamol).

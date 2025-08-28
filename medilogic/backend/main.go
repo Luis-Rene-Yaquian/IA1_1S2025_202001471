@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -16,12 +17,14 @@ import (
 	"strings"
 	"sync"
 	"time"
+
 	iprolog "github.com/ichiban/prolog"
 )
 
-// -------------------------
-// Session
-// -------------------------
+/* ===========================================================
+   Session / WebRoot
+   =========================================================== */
+
 var (
 	sessions   = make(map[string]string) // sid -> username
 	sessMu     sync.Mutex
@@ -29,15 +32,16 @@ var (
 )
 var webRoot = detectWebRoot()
 
-// -------------------------
-// Tipos comunes
-// -------------------------
+/* ===========================================================
+   Tipos comunes
+   =========================================================== */
+
 type loginReq struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
 }
 
-// ====== PACIENTE (MVP ya existente) ======
+// ====== PACIENTE ======
 type DiagnoseReq struct {
 	Symptoms  []SymptomEntry `json:"symptoms"`
 	Allergies []string       `json:"allergies"`
@@ -53,17 +57,20 @@ type DiagnoseResp struct {
 	Explanations string      `json:"explanations"`
 }
 type Diagnosis struct {
-    Disease         string   `json:"disease"`
-    Affinity        int      `json:"affinity"`
-    SuggestedDrug   string   `json:"suggested_drug,omitempty"`
-    Alternatives    []string `json:"alternatives,omitempty"`   // ← nuevo
-    Urgency         string   `json:"urgency"`
-    Warnings        []string `json:"warnings,omitempty"`
-    RulesFired      []string `json:"rules_fired"`
-    MatchedSymptoms []string `json:"matched_symptoms,omitempty"`
+	Disease         string   `json:"disease"`
+	Affinity        int      `json:"affinity"`
+	SuggestedDrug   string   `json:"suggested_drug,omitempty"`
+	Alternatives    []string `json:"alternatives,omitempty"`
+	Urgency         string   `json:"urgency"`
+	Warnings        []string `json:"warnings,omitempty"`
+	RulesFired      []string `json:"rules_fired"`
+	MatchedSymptoms []string `json:"matched_symptoms,omitempty"`
 }
 
-// ====== ADMIN: Snapshot de KB ======
+/* ===========================================================
+   ADMIN: Snapshot de KB (fuente de verdad del panel)
+   =========================================================== */
+
 type Snapshot struct {
 	Symptoms    []Symptom    `json:"symptoms"`
 	Diseases    []Disease    `json:"diseases"`
@@ -71,25 +78,25 @@ type Snapshot struct {
 }
 type Symptom struct {
 	ID    string `json:"id"`              // ej: fiebre
-	Label string `json:"label,omitempty"` // opcional
+	Label string `json:"label,omitempty"` // opcional (solo UI)
 }
 type Disease struct {
 	ID          string   `json:"id"`          // ej: gripe
 	Name        string   `json:"name"`        // ej: "Gripe"
 	System      string   `json:"system"`      // respiratorio, digestivo, etc.
-	Type        string   `json:"type"`        // viral, crónico, etc.
-	Description string   `json:"description"` // texto
+	Type        string   `json:"type"`        // viral, bacteriano, cronico, ...
+	Description string   `json:"description"` // opcional, informe/UI
 	Symptoms    []string `json:"symptoms"`    // ids de sintoma
-	ContraMeds  []string `json:"contra_meds"` // meds contraindicados para esta enfermedad
+	ContraMeds  []string `json:"contra_meds"` // enf_contra_medicamento(Enf, Med)
 }
 type Medication struct {
 	ID     string   `json:"id"`              // ej: paracetamol
-	Label  string   `json:"label,omitempty"` // opcional
-	Treats []string `json:"treats"`          // enfermedades que trata
-	Contra []string `json:"contra"`          // condiciones/alergias crónicas contra las que está contraindicado
+	Label  string   `json:"label,omitempty"` // opcional (solo UI)
+	Treats []string `json:"treats"`          // trata(Med, Enf)
+	Contra []string `json:"contra"`          // contraindicado(Med, Cond)
 }
 
-// Snapshot "vacío" para cuando no hay KB todavía
+// Snapshot vacío/ejemplo
 func defaultEmptySnapshot() Snapshot {
 	return Snapshot{
 		Symptoms:    []Symptom{},
@@ -97,8 +104,6 @@ func defaultEmptySnapshot() Snapshot {
 		Medications: []Medication{},
 	}
 }
-
-// Snapshot de ejemplo (mínimo) para bootstrap si no existe el .pl
 func defaultSnapshot() Snapshot {
 	return Snapshot{
 		Symptoms: []Symptom{
@@ -127,39 +132,10 @@ func defaultSnapshot() Snapshot {
 	}
 }
 
-// ========= KB de paciente (mock) para /api/diagnose =========
-type kbData struct {
-	DiseaseSymptoms map[string][]string
-	Treats          map[string][]string
-	Contraindicated map[string][]string
-	Critical        map[string]bool
-}
+/* ===========================================================
+   MAIN + rutas
+   =========================================================== */
 
-func stubKB() kbData {
-	return kbData{
-		DiseaseSymptoms: map[string][]string{
-			"gripe":      {"fiebre", "tos", "dolor_garganta"},
-			"faringitis": {"dolor_garganta", "fiebre"},
-			"neumonia":   {"fiebre", "tos", "disnea", "dolor_pecho"},
-			"migraña":    {"cefalea", "nausea"},
-		},
-		Treats: map[string][]string{
-			"paracetamol": {"gripe", "migraña"},
-			"amoxicilina": {"faringitis", "neumonia"},
-			"ibuprofeno":  {"migraña", "gripe"},
-		},
-		Contraindicated: map[string][]string{
-			"paracetamol": {"alergia_paracetamol"},
-			"amoxicilina": {"alergia_penicilina"},
-			"ibuprofeno":  {"ulcera_gastrica"},
-		},
-		Critical: map[string]bool{"disnea": true, "dolor_pecho": true}, // ← corregido
-	}
-}
-
-// -------------------------
-// MAIN + rutas
-// -------------------------
 func main() {
 	mux := http.NewServeMux()
 
@@ -186,7 +162,7 @@ func main() {
 	// API Admin: snapshot KB
 	mux.HandleFunc("/api/admin/snapshot", handleAdminSnapshot)
 
-	// Export/Import PL crudo
+	// Export/Import PL crudo (opcional)
 	mux.HandleFunc("/api/kb/export", handleKBExport)
 	mux.HandleFunc("/api/kb/import", handleKBImport)
 
@@ -202,7 +178,10 @@ func main() {
 	log.Fatal(server.ListenAndServe())
 }
 
-// ----- páginas -----
+/* ===========================================================
+   Páginas
+   =========================================================== */
+
 func handleIndex(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
@@ -233,7 +212,10 @@ func handleAdminKBPage(w http.ResponseWriter, r *http.Request) {
 	serveFile(w, r, "admin_kb.html")
 }
 
-// ----- auth -----
+/* ===========================================================
+   Auth
+   =========================================================== */
+
 func handleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodOptions {
 		return
@@ -280,7 +262,10 @@ func handleLogout(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// ----- paciente (lógica Prolog) -----
+/* ===========================================================
+   PACIENTE (lógica Prolog)
+   =========================================================== */
+
 func handleDiagnose(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -300,11 +285,10 @@ func handleDiagnose(w http.ResponseWriter, r *http.Request) {
 	}
 	kb, err := readKB()
 	if err != nil {
-		// si no existe aún el .pl del admin, seguimos con vacío
 		kb = []byte{}
 	}
 
-	// 2) Crear intérprete e inyectar reglas + hechos estáticos
+	// 2) Crear intérprete e inyectar reglas + KB
 	p := iprolog.New(nil, nil)
 	if err := p.Exec(string(rules)); err != nil {
 		log.Println("prolog rules error:", err)
@@ -410,7 +394,7 @@ func handleDiagnose(w http.ResponseWriter, r *http.Request) {
 			q.Close()
 		}
 
-		// medicamentos seguros (todas las opciones) vía Prolog
+		// medicamentos seguros por regla
 		safeMeds := []string{}
 		if q, err := p.Query(fmt.Sprintf(`medicamento_seguro(%s, M).`, safeAtom(enfID))); err == nil {
 			for q.Next() {
@@ -422,9 +406,9 @@ func handleDiagnose(w http.ResponseWriter, r *http.Request) {
 			q.Close()
 		}
 
-		// Fallback en Go si Prolog no devolvió ninguno:
+		// Fallback si la regla no devuelve nada (filtra contraindicaciones)
 		if len(safeMeds) == 0 {
-			// 1) candidatos que tratan la enfermedad
+			// candidatos que tratan la enfermedad
 			cands := []string{}
 			if q, err := p.Query(fmt.Sprintf(`trata(M,%s).`, safeAtom(enfID))); err == nil {
 				for q.Next() {
@@ -435,7 +419,7 @@ func handleDiagnose(w http.ResponseWriter, r *http.Request) {
 				}
 				q.Close()
 			}
-			// 2) set de condiciones del paciente (alergias + crónicas)
+			// bloqueos por alergias/crónicas del paciente
 			blocked := map[string]struct{}{}
 			for _, a := range req.Allergies {
 				blocked[safeAtom(a)] = struct{}{}
@@ -443,9 +427,9 @@ func handleDiagnose(w http.ResponseWriter, r *http.Request) {
 			for _, c := range req.Chronics {
 				blocked[safeAtom(c)] = struct{}{}
 			}
-			// 3) filtrar candidatos contra contraindicaciones y enf_contra_medicamento
 			for _, cand := range cands {
 				bad := false
+				// contraindicado(Med, Cond)
 				if q, err := p.Query(fmt.Sprintf(`contraindicado(%s,Cond).`, safeAtom(cand))); err == nil {
 					for q.Next() {
 						var row struct{ Cond string }
@@ -458,6 +442,7 @@ func handleDiagnose(w http.ResponseWriter, r *http.Request) {
 					}
 					q.Close()
 				}
+				// enf_contra_medicamento(Enf, Med)
 				if !bad {
 					if q, err := p.Query(fmt.Sprintf(`enf_contra_medicamento(%s,%s).`, safeAtom(enfID), safeAtom(cand))); err == nil {
 						if q.Next() {
@@ -478,7 +463,7 @@ func handleDiagnose(w http.ResponseWriter, r *http.Request) {
 	}
 	diseasesQ.Close()
 
-	// 6) Ordenar por afinidad desc y construir respuesta
+	// 6) Orden y respuesta
 	sort.Slice(rows, func(i, j int) bool { return rows[i].aff > rows[j].aff })
 
 	resp := DiagnoseResp{}
@@ -496,7 +481,7 @@ func handleDiagnose(w http.ResponseWriter, r *http.Request) {
 			Disease:         r2.name,
 			Affinity:        r2.aff,
 			SuggestedDrug:   med,
-			Alternatives:    alts,          // resto de opciones seguras
+			Alternatives:    alts,
 			Urgency:         r2.urg,
 			Warnings:        []string{},
 			RulesFired:      rf,
@@ -509,55 +494,223 @@ func handleDiagnose(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
+/* ===========================================================
+   Debug endpoints
+   =========================================================== */
 
-func mapUrgency(u string) string {
-	switch u {
-	case "inmediata":
-		return "Consulta médica inmediata sugerida"
-	case "consulta":
-		return "Consulta médica recomendada"
-	default:
-		return "Observación / automanejo (según evolución)"
+func handleDebugEnf(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		http.Error(w, "missing ?id=gripe", http.StatusBadRequest)
+		return
 	}
-}
-func normList(xs []string) []string {
-	out := make([]string, 0, len(xs))
-	for _, v := range xs {
-		v = strings.TrimSpace(strings.ToLower(v))
-		if v != "" {
-			out = append(out, v)
+	kb, err := readKB()
+	if err != nil {
+		http.Error(w, "kb not found", http.StatusInternalServerError)
+		return
+	}
+	p := iprolog.New(nil, nil)
+	if err := p.Exec(string(kb)); err != nil {
+		http.Error(w, "kb load error", http.StatusInternalServerError)
+		return
+	}
+	q, err := p.Query(fmt.Sprintf(`enf_sintoma(%s,S).`, safeAtom(id)))
+	if err != nil {
+		http.Error(w, "query error", http.StatusInternalServerError)
+		return
+	}
+	var out []string
+	for q.Next() {
+		var s struct{ S string }
+		if err := q.Scan(&s); err == nil {
+			out = append(out, s.S)
 		}
 	}
-	return out
+	q.Close()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"id": id, "symptoms": out})
 }
-func contains(xs []string, v string) bool { for _, e := range xs { if e == v { return true } }; return false }
-func suggestDrug(disease string, kb kbData, allergies, chronics []string) (string, []string) {
-	var warnings []string
-outer:
-	for drug, diseases := range kb.Treats {
-		if !contains(diseases, disease) {
+
+func handleDebugPres(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req DiagnoseReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	p := iprolog.New(nil, nil)
+
+	sevW := map[string]int{"leve": 1, "moderado": 2, "severo": 3}
+	var asserts []string
+	var b strings.Builder
+
+	for _, s := range req.Symptoms {
+		if !s.Present {
 			continue
 		}
-		cts := kb.Contraindicated[drug]
-		for _, a := range allergies {
-			if contains(cts, a) {
-				warnings = append(warnings, fmt.Sprintf("Evitar %s por alergia: %s", drug, a))
-				continue outer
-			}
+		wgt := sevW[strings.ToLower(s.Severity)]
+		if wgt == 0 {
+			wgt = 1
 		}
-		for _, c := range chronics {
-			if contains(cts, c) {
-				warnings = append(warnings, fmt.Sprintf("Evitar %s por condición: %s", drug, c))
-				continue outer
-			}
-		}
-		return drug, warnings
+		line := fmt.Sprintf("presente(%s,%d).", safeAtom(s.ID), wgt)
+		asserts = append(asserts, line)
+		fmt.Fprintln(&b, line)
 	}
-	return "", warnings
+	for _, a := range req.Allergies {
+		line := fmt.Sprintf("alergia(%s).", safeAtom(a))
+		asserts = append(asserts, line)
+		fmt.Fprintln(&b, line)
+	}
+	for _, c := range req.Chronics {
+		line := fmt.Sprintf("cronica(%s).", safeAtom(c))
+		asserts = append(asserts, line)
+		fmt.Fprintln(&b, line)
+	}
+	if err := p.Exec(b.String()); err != nil {
+		http.Error(w, "assert error", http.StatusInternalServerError)
+		return
+	}
+
+	q, err := p.Query(`presente(S,P).`)
+	if err != nil {
+		http.Error(w, "query error", http.StatusInternalServerError)
+		return
+	}
+	type pair struct{ S string; P int }
+	var out []pair
+	for q.Next() {
+		var row struct{ S string; P int }
+		if err := q.Scan(&row); err == nil {
+			out = append(out, pair{S: row.S, P: row.P})
+		}
+	}
+	q.Close()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"received":  req,
+		"asserts":   asserts,
+		"presentes": out,
+	})
 }
 
-// ----- Admin snapshot API -----
-var kbPath = filepath.Join("assets", "kb", "medilogic.pl")
+func handleDebugMedSeguro(w http.ResponseWriter, r *http.Request) {
+	var req DiagnoseReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	enf := r.URL.Query().Get("id")
+	if enf == "" {
+		enf = "gripe"
+	}
+
+	rules, err := readRules()
+	if err != nil {
+		http.Error(w, "readRules error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	kb, err := readKB()
+	if err != nil {
+		http.Error(w, "readKB error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	p := iprolog.New(nil, nil)
+	if err := p.Exec(string(rules)); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]any{
+			"error":         "rules load error",
+			"detail":        err.Error(),
+			"preview_rules": string(rules),
+		})
+		return
+	}
+	if err := p.Exec(string(kb)); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]any{
+			"error":      "kb load error",
+			"detail":     err.Error(),
+			"preview_kb": string(kb),
+		})
+		return
+	}
+
+	sevW := map[string]int{"leve": 1, "moderado": 2, "severo": 3}
+	var b strings.Builder
+	for _, s := range req.Symptoms {
+		if !s.Present { continue }
+		wgt := sevW[strings.ToLower(s.Severity)]; if wgt==0 { wgt=1 }
+		fmt.Fprintf(&b, "presente(%s,%d).\n", safeAtom(s.ID), wgt)
+	}
+	for _, a := range req.Allergies { fmt.Fprintf(&b, "alergia(%s).\n", safeAtom(a)) }
+	for _, c := range req.Chronics { fmt.Fprintf(&b, "cronica(%s).\n", safeAtom(c)) }
+	if err := p.Exec(b.String()); err != nil {
+		http.Error(w, "assert error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	candQ, err := p.Query(fmt.Sprintf(`trata(M,%s).`, safeAtom(enf)))
+	if err != nil { http.Error(w, "query trata/2 error: "+err.Error(), http.StatusInternalServerError); return }
+	var candidates []string
+	for candQ.Next() {
+		var m struct{ M string }
+		if err := candQ.Scan(&m); err == nil { candidates = append(candidates, m.M) }
+	}
+	candQ.Close()
+	if candidates == nil { candidates = []string{} }
+
+	safeQ, err := p.Query(fmt.Sprintf(`medicamento_seguro(%s,M).`, safeAtom(enf)))
+	if err != nil { http.Error(w, "query medicamento_seguro/2 error: "+err.Error(), http.StatusInternalServerError); return }
+	var safe []string
+	for safeQ.Next() {
+		var m struct{ M string }
+		if err := safeQ.Scan(&m); err == nil { safe = append(safe, m.M) }
+	}
+	safeQ.Close()
+	if safe == nil { safe = []string{} }
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"disease":    enf,
+		"candidates": candidates,
+		"safe":       safe,
+	})
+}
+
+func handleDebugRules(w http.ResponseWriter, r *http.Request) {
+	rules, err := readRules()
+	if err != nil {
+		http.Error(w, "readRules error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	p := iprolog.New(nil, nil)
+	if err := p.Exec(string(rules)); err != nil {
+		http.Error(w, "rules exec error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"ok":     true,
+		"size":   len(rules),
+		"notice": "rules.pl loaded and parsed OK",
+	})
+}
+
+/* ===========================================================
+   Admin snapshot API (validación fuerte + writer atómico)
+   =========================================================== */
+
+var (
+	kbPath = filepath.Join("assets", "kb", "medilogic.pl")
+	kbMu   sync.Mutex
+)
 
 func handleAdminSnapshot(w http.ResponseWriter, r *http.Request) {
 	if _, ok := currentUser(r); !ok {
@@ -573,21 +726,36 @@ func handleAdminSnapshot(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(snap)
+
 	case http.MethodPost:
 		var snap Snapshot
 		if err := json.NewDecoder(r.Body).Decode(&snap); err != nil {
-			http.Error(w, "bad json", http.StatusBadRequest)
+			http.Error(w, "invalid json", http.StatusBadRequest)
+			return
+		}
+		if err := validateSnapshot(&snap); err != nil {
+			http.Error(w, "snapshot validation error: "+err.Error(), http.StatusUnprocessableEntity)
 			return
 		}
 		if err := writePLFromSnapshot(snap); err != nil {
-			http.Error(w, "cannot write .pl", http.StatusInternalServerError)
+			http.Error(w, "cannot write .pl: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
+
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
+
+
+
+
+
+
+/* ===========================================================
+   Lectura/Escritura de KB (.pl)
+   =========================================================== */
 
 func readKB() ([]byte, error) {
 	if b, err := os.ReadFile(kbPath); err == nil {
@@ -596,15 +764,17 @@ func readKB() ([]byte, error) {
 	alt := filepath.Join("..", "assets", "kb", "medilogic.pl")
 	return os.ReadFile(alt)
 }
-func writeKB(b []byte) error {
-	if err := os.WriteFile(kbPath, b, 0644); err == nil {
-		return nil
+func writeKBAtomic(b []byte) error {
+	kbMu.Lock()
+	defer kbMu.Unlock()
+	tmp := kbPath + ".tmp"
+	if err := os.WriteFile(tmp, b, 0644); err != nil {
+		return err
 	}
-	alt := filepath.Join("..", "assets", "kb", "medilogic.pl")
-	return os.WriteFile(alt, b, 0644)
+	_ = os.Remove(kbPath) // Windows: Rename no sobreescribe
+	return os.Rename(tmp, kbPath)
 }
 
-// === NUEVO: readRules con strip BOM y mejor error
 func readRules() ([]byte, error) {
 	p1 := filepath.Join("assets", "kb", "rules.pl")
 	if b, err := os.ReadFile(p1); err == nil {
@@ -641,313 +811,26 @@ func handleKBImport(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	b := make([]byte, r.ContentLength)
-	_, _ = r.Body.Read(b)
-	if len(b) == 0 {
+	body, err := io.ReadAll(r.Body)
+	if err != nil || len(body) == 0 {
 		http.Error(w, "empty body", http.StatusBadRequest)
 		return
 	}
-	if err := writeKB(b); err != nil {
-		http.Error(w, "cannot write kb", http.StatusInternalServerError)
+	// Escribe sin validar (endpoint “raw”); el panel usa /api/admin/snapshot
+	if err := writeKBAtomic(body); err != nil {
+		http.Error(w, "cannot write kb: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func handleDebugEnf(w http.ResponseWriter, r *http.Request) {
-	id := r.URL.Query().Get("id")
-	if id == "" {
-		http.Error(w, "missing ?id=gripe", http.StatusBadRequest)
-		return
-	}
+/* ===========================================================
+   Parser/Writer PL (formato estable y agrupado)
+   =========================================================== */
 
-	kb, err := readKB()
-	if err != nil {
-		http.Error(w, "kb not found", http.StatusInternalServerError)
-		return
-	}
-
-	p := iprolog.New(nil, nil)
-	if err := p.Exec(string(kb)); err != nil {
-		http.Error(w, "kb load error", http.StatusInternalServerError)
-		return
-	}
-
-	q, err := p.Query(fmt.Sprintf(`enf_sintoma(%s,S).`, safeAtom(id)))
-	if err != nil {
-		http.Error(w, "query error", http.StatusInternalServerError)
-		return
-	}
-	var out []string
-	for q.Next() {
-		var s struct{ S string }
-		if err := q.Scan(&s); err == nil {
-			out = append(out, s.S)
-		}
-	}
-	q.Close()
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"id": id, "symptoms": out})
-}
-
-// Devuelve los hechos presente(S,P) que REALMENTE asertó el backend en ESTA petición
-func handleDebugPres(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	var req DiagnoseReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
-
-	p := iprolog.New(nil, nil)
-
-	// --- construir un solo bloque de código Prolog con TODOS los hechos
-	sevW := map[string]int{"leve": 1, "moderado": 2, "severo": 3}
-	var asserts []string
-	var b strings.Builder
-
-	for _, s := range req.Symptoms {
-		if !s.Present {
-			continue
-		}
-		wgt := sevW[strings.ToLower(s.Severity)]
-		if wgt == 0 {
-			wgt = 1
-		}
-		line := fmt.Sprintf("presente(%s,%d).", safeAtom(s.ID), wgt)
-		asserts = append(asserts, line)
-		fmt.Fprintln(&b, line)
-	}
-	for _, a := range req.Allergies {
-		line := fmt.Sprintf("alergia(%s).", safeAtom(a))
-		asserts = append(asserts, line)
-		fmt.Fprintln(&b, line)
-	}
-	for _, c := range req.Chronics {
-		line := fmt.Sprintf("cronica(%s).", safeAtom(c))
-		asserts = append(asserts, line)
-		fmt.Fprintln(&b, line)
-	}
-
-	if err := p.Exec(b.String()); err != nil {
-		http.Error(w, "assert error", http.StatusInternalServerError)
-		return
-	}
-
-	// --- leer lo que quedó en la BD Prolog
-	q, err := p.Query(`presente(S,P).`)
-	if err != nil {
-		http.Error(w, "query error", http.StatusInternalServerError)
-		return
-	}
-
-	type pair struct{ S string; P int }
-	var out []pair
-	for q.Next() {
-		var row struct{ S string; P int }
-		if err := q.Scan(&row); err == nil {
-			out = append(out, pair{S: row.S, P: row.P})
-		}
-	}
-	q.Close()
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
-		"received":  req,
-		"asserts":   asserts,
-		"presentes": out,
-	})
-}
-
-// ====== NUEVO: Debug de medicamento (con errores detallados y fallback)
-func handleDebugMedSeguro(w http.ResponseWriter, r *http.Request) {
-	var req DiagnoseReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
-	enf := r.URL.Query().Get("id")
-	if enf == "" {
-		enf = "gripe"
-	}
-
-	// Cargar reglas + KB con errores visibles
-	rules, err := readRules()
-	if err != nil {
-		http.Error(w, "readRules error: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	kb, err := readKB()
-	if err != nil {
-		http.Error(w, "readKB error: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	p := iprolog.New(nil, nil)
-	if err := p.Exec(string(rules)); err != nil {
-		// Devuelve el mensaje exacto del parser
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]any{
-			"error":         "rules load error",
-			"detail":        err.Error(),
-			"preview_rules": string(rules),
-		})
-		return
-	}
-	if err := p.Exec(string(kb)); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]any{
-			"error":     "kb load error",
-			"detail":    err.Error(),
-			"preview_kb": string(kb),
-		})
-		return
-	}
-
-	// Asertar TODO en una sola Exec
-	sevW := map[string]int{"leve": 1, "moderado": 2, "severo": 3}
-	var b strings.Builder
-	for _, s := range req.Symptoms {
-		if !s.Present {
-			continue
-		}
-		wgt := sevW[strings.ToLower(s.Severity)]
-		if wgt == 0 {
-			wgt = 1
-		}
-		fmt.Fprintf(&b, "presente(%s,%d).\n", safeAtom(s.ID), wgt)
-	}
-	for _, a := range req.Allergies {
-		fmt.Fprintf(&b, "alergia(%s).\n", safeAtom(a))
-	}
-	for _, c := range req.Chronics {
-		fmt.Fprintf(&b, "cronica(%s).\n", safeAtom(c))
-	}
-	if err := p.Exec(b.String()); err != nil {
-		http.Error(w, "assert error: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	// 1) Candidatos
-	candQ, err := p.Query(fmt.Sprintf(`trata(M,%s).`, safeAtom(enf)))
-	if err != nil {
-		http.Error(w, "query trata/2 error: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	var candidates []string
-	for candQ.Next() {
-		var m struct{ M string }
-		if err := candQ.Scan(&m); err == nil {
-			candidates = append(candidates, m.M)
-		}
-	}
-	candQ.Close()
-	if candidates == nil {
-		candidates = []string{}
-	}
-
-	// 2) Seguros (regla)
-	safeQ, err := p.Query(fmt.Sprintf(`medicamento_seguro(%s,M).`, safeAtom(enf)))
-	if err != nil {
-		http.Error(w, "query medicamento_seguro/2 error: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	var safe []string
-	for safeQ.Next() {
-		var m struct{ M string }
-		if err := safeQ.Scan(&m); err == nil {
-			safe = append(safe, m.M)
-		}
-	}
-	safeQ.Close()
-	if safe == nil {
-		safe = []string{}
-	}
-
-	// 3) Fallback en Go por si la regla no devuelve nada
-	fallbackSafe := []string{}
-	whyBlocked := map[string][]string{}
-	if len(safe) == 0 && len(candidates) > 0 {
-		blocked := map[string]struct{}{}
-		for _, a := range req.Allergies {
-			blocked[safeAtom(a)] = struct{}{}
-		}
-		for _, c := range req.Chronics {
-			blocked[safeAtom(c)] = struct{}{}
-		}
-
-		for _, cand := range candidates {
-			isBad := false
-			// contraindicado(Med, Cond) ∧ Cond ∈ {alergias, crónicas}
-			if q, err := p.Query(fmt.Sprintf(`contraindicado(%s,Cond).`, safeAtom(cand))); err == nil {
-				for q.Next() {
-					var row struct{ Cond string }
-					if err := q.Scan(&row); err == nil {
-						if _, ok := blocked[row.Cond]; ok {
-							isBad = true
-							whyBlocked[cand] = append(whyBlocked[cand], "contra: "+row.Cond)
-						}
-					}
-				}
-				q.Close()
-			}
-			// enf_contra_medicamento(Enf, Med) (si existe)
-			if !isBad {
-				if q, err := p.Query(fmt.Sprintf(`enf_contra_medicamento(%s,%s).`, safeAtom(enf), safeAtom(cand))); err == nil {
-					if q.Next() {
-						isBad = true
-						whyBlocked[cand] = append(whyBlocked[cand], "enf_contra_medicamento")
-					}
-					q.Close()
-				}
-			}
-			if !isBad {
-				fallbackSafe = append(fallbackSafe, cand)
-			}
-		}
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
-		"disease":       enf,
-		"candidates":    candidates,
-		"safe":          safe,
-		"fallback_safe": fallbackSafe,
-		"why_blocked":   whyBlocked,
-	})
-}
-
-func handleDebugRules(w http.ResponseWriter, r *http.Request) {
-	rules, err := readRules()
-	if err != nil {
-		http.Error(w, "readRules error: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	p := iprolog.New(nil, nil)
-	if err := p.Exec(string(rules)); err != nil {
-		// Devuelve el mensaje exacto del parser de Prolog
-		http.Error(w, "rules exec error: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
-		"ok":     true,
-		"size":   len(rules),
-		"notice": "rules.pl loaded and parsed OK",
-	})
-}
-
-// ----- parse/write PL (formato definido) -----
 func loadSnapshotFromPL() (Snapshot, error) {
 	b, err := readKB()
-	if err != nil { // si no existe el archivo, usa snapshot por defecto
+	if err != nil { // si no existe, usa bootstrap
 		return defaultSnapshot(), nil
 	}
 	lines := normalizePL(string(b))
@@ -955,11 +838,12 @@ func loadSnapshotFromPL() (Snapshot, error) {
 
 	reSint := regexp.MustCompile(`^sintoma\((\w+)\)\.$`)
 	reEnf := regexp.MustCompile(`^enfermedad\((\w+),\s*\"([^\"]*)\",\s*(\w+),\s*(\w+)\)\.$`)
+	reDesc := regexp.MustCompile(`^descripcion_enf\((\w+),\s*\"([^\"]*)\"\)\.$`)
 	reEnfS := regexp.MustCompile(`^enf_sintoma\((\w+),\s*(\w+)\)\.$`)
+	reEnfContraMed := regexp.MustCompile(`^enf_contra_medicamento\((\w+),\s*(\w+)\)\.$`)
 	reMed := regexp.MustCompile(`^medicamento\((\w+)\)\.$`)
 	reTrat := regexp.MustCompile(`^trata\((\w+),\s*(\w+)\)\.$`)
 	reContra := regexp.MustCompile(`^contraindicado\((\w+),\s*(\w+)\)\.$`)
-	reEnfContraMed := regexp.MustCompile(`^enf_contra_medicamento\((\w+),\s*(\w+)\)\.$`)
 
 	dmap := map[string]*Disease{}
 	smap := map[string]*Symptom{}
@@ -976,56 +860,69 @@ func loadSnapshotFromPL() (Snapshot, error) {
 		}
 		if m := reEnf.FindStringSubmatch(ln); m != nil {
 			id, name, system, typ := m[1], m[2], m[3], m[4]
-			enf := &Disease{ID: id, Name: name, System: system, Type: typ}
-			dmap[id] = enf
+			enf := dmap[id]
+			if enf == nil {
+				enf = &Disease{ID: id}
+				dmap[id] = enf
+			}
+			enf.Name, enf.System, enf.Type = name, system, typ
+			continue
+		}
+		if m := reDesc.FindStringSubmatch(ln); m != nil {
+			id, desc := m[1], m[2]
+			enf := dmap[id]
+			if enf == nil {
+				enf = &Disease{ID: id}
+				dmap[id] = enf
+			}
+			enf.Description = desc
 			continue
 		}
 		if m := reEnfS.FindStringSubmatch(ln); m != nil {
 			enfID, symID := m[1], m[2]
-			if d, ok := dmap[enfID]; ok {
-				d.Symptoms = append(d.Symptoms, symID)
-			} else {
-				tmp := &Disease{ID: enfID, Name: enfID, Symptoms: []string{symID}}
-				dmap[enfID] = tmp
+			enf := dmap[enfID]
+			if enf == nil {
+				enf = &Disease{ID: enfID}
+				dmap[enfID] = enf
 			}
+			enf.Symptoms = uniq(append(enf.Symptoms, symID))
+			continue
+		}
+		if m := reEnfContraMed.FindStringSubmatch(ln); m != nil {
+			enfID, medID := m[1], m[2]
+			enf := dmap[enfID]
+			if enf == nil {
+				enf = &Disease{ID: enfID}
+				dmap[enfID] = enf
+			}
+			enf.ContraMeds = uniq(append(enf.ContraMeds, medID))
 			continue
 		}
 		if m := reMed.FindStringSubmatch(ln); m != nil {
 			id := m[1]
 			if _, ok := mmap[id]; !ok {
-				med := &Medication{ID: id}
-				mmap[id] = med
+				mmap[id] = &Medication{ID: id}
 			}
 			continue
 		}
 		if m := reTrat.FindStringSubmatch(ln); m != nil {
 			medID, enfID := m[1], m[2]
-			if med, ok := mmap[medID]; ok {
-				med.Treats = append(med.Treats, enfID)
-			} else {
-				tmp := &Medication{ID: medID, Treats: []string{enfID}}
-				mmap[medID] = tmp
+			med := mmap[medID]
+			if med == nil {
+				med = &Medication{ID: medID}
+				mmap[medID] = med
 			}
+			med.Treats = uniq(append(med.Treats, enfID))
 			continue
 		}
 		if m := reContra.FindStringSubmatch(ln); m != nil {
 			medID, cond := m[1], m[2]
-			if med, ok := mmap[medID]; ok {
-				med.Contra = append(med.Contra, cond)
-			} else {
-				tmp := &Medication{ID: medID, Contra: []string{cond}}
-				mmap[medID] = tmp
+			med := mmap[medID]
+			if med == nil {
+				med = &Medication{ID: medID}
+				mmap[medID] = med
 			}
-			continue
-		}
-		if m := reEnfContraMed.FindStringSubmatch(ln); m != nil {
-			enfID, medID := m[1], m[2]
-			if d, ok := dmap[enfID]; ok {
-				d.ContraMeds = append(d.ContraMeds, medID)
-			} else {
-				tmp := &Disease{ID: enfID, Name: enfID, ContraMeds: []string{medID}}
-				dmap[enfID] = tmp
-			}
+			med.Contra = uniq(append(med.Contra, cond))
 			continue
 		}
 	}
@@ -1041,7 +938,7 @@ func loadSnapshotFromPL() (Snapshot, error) {
 		snap.Medications = append(snap.Medications, *m)
 	}
 
-	// ordenar
+	// Orden estable
 	sort.Slice(snap.Symptoms, func(i, j int) bool { return snap.Symptoms[i].ID < snap.Symptoms[j].ID })
 	sort.Slice(snap.Diseases, func(i, j int) bool { return snap.Diseases[i].ID < snap.Diseases[j].ID })
 	sort.Slice(snap.Medications, func(i, j int) bool { return snap.Medications[i].ID < snap.Medications[j].ID })
@@ -1049,49 +946,205 @@ func loadSnapshotFromPL() (Snapshot, error) {
 }
 
 func writePLFromSnapshot(s Snapshot) error {
+	// 1) Normalización + validación fuerte
+	if err := validateSnapshot(&s); err != nil {
+		return err
+	}
+
+	// 2) Orden estable de impresión
+	sort.Slice(s.Symptoms, func(i, j int) bool { return s.Symptoms[i].ID < s.Symptoms[j].ID })
+	sort.Slice(s.Diseases, func(i, j int) bool { return s.Diseases[i].ID < s.Diseases[j].ID })
+	sort.Slice(s.Medications, func(i, j int) bool { return s.Medications[i].ID < s.Medications[j].ID })
+
 	var b strings.Builder
 	bw := bufio.NewWriter(&b)
 	fmt.Fprintln(bw, "% ======= MediLogic KB (auto-generado) =======")
 	fmt.Fprintln(bw, "% NO editar a mano; use /admin/kb")
-	fmt.Fprintln(bw, "")
 
-	// síntomas
+	// 1) sintoma/1
+	fmt.Fprintln(bw, "")
 	for _, x := range s.Symptoms {
 		fmt.Fprintf(bw, "sintoma(%s).\n", safeAtom(x.ID))
 	}
-	fmt.Fprintln(bw, "")
 
-	// enfermedades
+	// 2) enfermedad/4
+	fmt.Fprintln(bw, "")
 	for _, d := range s.Diseases {
-		name := strings.ReplaceAll(d.Name, `"`, `\"`)
+		name := escQuotes(d.Name)
 		fmt.Fprintf(bw, "enfermedad(%s, \"%s\", %s, %s).\n",
 			safeAtom(d.ID), name, safeAtom(d.System), safeAtom(d.Type))
 	}
+
+	// 3) descripcion_enf/2 (opcional)
+	for _, d := range s.Diseases {
+		desc := strings.TrimSpace(d.Description)
+		if desc == "" {
+			continue
+		}
+		fmt.Fprintf(bw, "descripcion_enf(%s, \"%s\").\n", safeAtom(d.ID), escQuotes(desc))
+	}
+
+	// 4) enf_sintoma/2
 	for _, d := range s.Diseases {
 		for _, sym := range d.Symptoms {
 			fmt.Fprintf(bw, "enf_sintoma(%s, %s).\n", safeAtom(d.ID), safeAtom(sym))
 		}
+	}
+
+	// 5) enf_contra_medicamento/2
+	for _, d := range s.Diseases {
 		for _, cm := range d.ContraMeds {
 			fmt.Fprintf(bw, "enf_contra_medicamento(%s, %s).\n", safeAtom(d.ID), safeAtom(cm))
 		}
 	}
-	fmt.Fprintln(bw, "")
 
-	// medicamentos
+	// 6) medicamento/1
+	fmt.Fprintln(bw, "")
 	for _, m := range s.Medications {
 		fmt.Fprintf(bw, "medicamento(%s).\n", safeAtom(m.ID))
 	}
+
+	// 7) trata/2
 	for _, m := range s.Medications {
 		for _, dz := range m.Treats {
 			fmt.Fprintf(bw, "trata(%s, %s).\n", safeAtom(m.ID), safeAtom(dz))
 		}
+	}
+
+	// 8) contraindicado/2
+	for _, m := range s.Medications {
 		for _, c := range m.Contra {
 			fmt.Fprintf(bw, "contraindicado(%s, %s).\n", safeAtom(m.ID), safeAtom(c))
 		}
 	}
 
 	bw.Flush()
-	return writeKB([]byte(b.String()))
+	return writeKBAtomic([]byte(b.String()))
+}
+
+/* ===========================================================
+   Validación, Normalización y Utils
+   =========================================================== */
+
+var reSafe = regexp.MustCompile(`[^a-z0-9_]+`)
+
+func safeAtom(s string) string {
+	t := strings.TrimSpace(strings.ToLower(s))
+	t = strings.ReplaceAll(t, " ", "_")
+	t = strings.ReplaceAll(t, "-", "_")
+	t = reSafe.ReplaceAllString(t, "")
+	if t == "" {
+		t = "x"
+	}
+	if !(t[0] >= 'a' && t[0] <= 'z') {
+		t = "x_" + t
+	}
+	return t
+}
+
+func uniq(ss []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(ss))
+	for _, s := range ss {
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	return out
+}
+
+func escQuotes(s string) string {
+	return strings.ReplaceAll(s, `"`, `\"`)
+}
+
+func validateSnapshot(s *Snapshot) error {
+	// normalizar IDs/contenido
+	for i := range s.Symptoms {
+		s.Symptoms[i].ID = safeAtom(s.Symptoms[i].ID)
+	}
+	for i := range s.Diseases {
+		d := &s.Diseases[i]
+		d.ID = safeAtom(d.ID)
+		d.System = safeAtom(d.System)
+		d.Type = safeAtom(d.Type)
+		for j := range d.Symptoms {
+			d.Symptoms[j] = safeAtom(d.Symptoms[j])
+		}
+		for j := range d.ContraMeds {
+			d.ContraMeds[j] = safeAtom(d.ContraMeds[j])
+		}
+		d.Symptoms = uniq(d.Symptoms)
+		d.ContraMeds = uniq(d.ContraMeds)
+	}
+	for i := range s.Medications {
+		m := &s.Medications[i]
+		m.ID = safeAtom(m.ID)
+		for j := range m.Treats {
+			m.Treats[j] = safeAtom(m.Treats[j])
+		}
+		for j := range m.Contra {
+			m.Contra[j] = safeAtom(m.Contra[j])
+		}
+		m.Treats = uniq(m.Treats)
+		m.Contra = uniq(m.Contra)
+	}
+
+	// índices para validar referencias
+	symSet := map[string]struct{}{}
+	for _, x := range s.Symptoms {
+		if x.ID == "" {
+			return fmt.Errorf("síntoma con ID vacío")
+		}
+		symSet[x.ID] = struct{}{}
+	}
+
+	disMap := map[string]*Disease{}
+	for i := range s.Diseases {
+		d := &s.Diseases[i]
+		if d.ID == "" {
+			return fmt.Errorf("enfermedad con ID vacío")
+		}
+		if strings.TrimSpace(d.Name) == "" {
+			return fmt.Errorf("enfermedad %s: nombre requerido", d.ID)
+		}
+		if d.System == "" || d.Type == "" {
+			return fmt.Errorf("enfermedad %s: system y type son requeridos", d.ID)
+		}
+		disMap[d.ID] = d
+		for _, sid := range d.Symptoms {
+			if _, ok := symSet[sid]; !ok {
+				return fmt.Errorf("enfermedad %s: síntoma '%s' no existe", d.ID, sid)
+			}
+		}
+	}
+
+	medMap := map[string]*Medication{}
+	for i := range s.Medications {
+		m := &s.Medications[i]
+		if m.ID == "" {
+			return fmt.Errorf("medicamento con ID vacío")
+		}
+		medMap[m.ID] = m
+	}
+
+	for _, m := range s.Medications {
+		for _, e := range m.Treats {
+			if _, ok := disMap[e]; !ok {
+				return fmt.Errorf("trata(%s,%s): enfermedad no existe", m.ID, e)
+			}
+		}
+	}
+	for _, d := range s.Diseases {
+		for _, cm := range d.ContraMeds {
+			if _, ok := medMap[cm]; !ok {
+				return fmt.Errorf("enf_contra_medicamento(%s,%s): medicamento no existe", d.ID, cm)
+			}
+		}
+	}
+
+	return nil
 }
 
 func normalizePL(s string) []string {
@@ -1109,15 +1162,11 @@ func normalizePL(s string) []string {
 	}
 	return out
 }
-func safeAtom(s string) string {
-	s = strings.TrimSpace(s)
-	s = strings.ToLower(s)
-	s = strings.ReplaceAll(s, " ", "_")
-	s = strings.ReplaceAll(s, "-", "_")
-	return s
-}
 
-// ----- helpers comunes -----
+/* ===========================================================
+   Helpers
+   =========================================================== */
+
 func serveFile(w http.ResponseWriter, r *http.Request, name string) {
 	p := filepath.Join(webRoot, name)
 	http.ServeFile(w, r, p)
