@@ -19,6 +19,7 @@ import (
 	"time"
 
 	iprolog "github.com/ichiban/prolog"
+	strconv "strconv"
 )
 
 /* ===========================================================
@@ -151,6 +152,7 @@ func main() {
 	mux.HandleFunc("/api/debug/presentes", handleDebugPres)
 	mux.HandleFunc("/api/debug/medseguro", handleDebugMedSeguro)
 	mux.HandleFunc("/api/debug/rules", handleDebugRules)
+	mux.HandleFunc("/api/debug/afinidad", handleDebugAfinidad)
 
 	// Auth
 	mux.HandleFunc("/auth/login", handleLogin)
@@ -158,7 +160,7 @@ func main() {
 
 	// API paciente
 	mux.HandleFunc("/api/diagnose", handleDiagnose)
-
+	mux.HandleFunc("/api/symptoms", handlePublicSymptoms) 
 	// API Admin: snapshot KB
 	mux.HandleFunc("/api/admin/snapshot", handleAdminSnapshot)
 
@@ -265,7 +267,6 @@ func handleLogout(w http.ResponseWriter, r *http.Request) {
 /* ===========================================================
    PACIENTE (lógica Prolog)
    =========================================================== */
-
 func handleDiagnose(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -303,19 +304,36 @@ func handleDiagnose(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 3) Asertar hechos de la sesión EN UNA SOLA Exec
+	// 3) Asertar hechos de la sesión (limpia + normaliza severidad)
 	{
-		sevW := map[string]int{"leve": 1, "moderado": 2, "severo": 3}
 		var b strings.Builder
+		// Limpiar hechos de sesión previos
+		b.WriteString("retractall(presente(_, _)).\n")
+		b.WriteString("retractall(alergia(_)).\n")
+		b.WriteString("retractall(cronica(_)).\n")
+
+		normalize := func(sev string) int {
+			sev = strings.ToLower(strings.TrimSpace(sev))
+			// acepta "1/2/3"
+			if n, err := strconv.Atoi(sev); err == nil && n >= 1 && n <= 3 {
+				return n
+			}
+			// o "leve/moderado/severo"
+			switch sev {
+			case "severo":
+				return 3
+			case "moderado":
+				return 2
+			default:
+				return 1 // leve por defecto
+			}
+		}
 
 		for _, s := range req.Symptoms {
 			if !s.Present {
 				continue
 			}
-			wgt := sevW[strings.ToLower(s.Severity)]
-			if wgt == 0 {
-				wgt = 1
-			}
+			wgt := normalize(s.Severity)
 			fmt.Fprintf(&b, "presente(%s,%d).\n", safeAtom(s.ID), wgt)
 		}
 		for _, a := range req.Allergies {
@@ -333,7 +351,7 @@ func handleDiagnose(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 4) Urgencia (global según síntomas presentes)
-	urg := "Observación / automanejo (según evolución)"
+	urg := "Observación recomendada"
 	if q, err := p.Query("urgencia(U)."); err == nil {
 		for q.Next() {
 			var res struct{ U string }
@@ -382,13 +400,17 @@ func handleDiagnose(w http.ResponseWriter, r *http.Request) {
 			q.Close()
 		}
 
-		// síntomas que hicieron match
+		// síntomas que hicieron match (normalizados)
 		var matched []string
-		if q, err := p.Query(fmt.Sprintf(`enf_sintoma(%s,S), presente(S,_).`, safeAtom(enfID))); err == nil {
+		if q, err := p.Query(fmt.Sprintf(`enf_sintoma(%s,S), presentepeso(S,_).`, safeAtom(enfID))); err == nil {
+			seen := map[string]struct{}{}
 			for q.Next() {
 				var s struct{ S string }
 				if err := q.Scan(&s); err == nil {
-					matched = append(matched, s.S)
+					if _, ok := seen[s.S]; !ok {
+						matched = append(matched, s.S)
+						seen[s.S] = struct{}{}
+					}
 				}
 			}
 			q.Close()
@@ -406,7 +428,7 @@ func handleDiagnose(w http.ResponseWriter, r *http.Request) {
 			q.Close()
 		}
 
-		// Fallback si la regla no devuelve nada (filtra contraindicaciones)
+		// Fallback si no hubo resultados (filtra contraindicaciones básicas)
 		if len(safeMeds) == 0 {
 			// candidatos que tratan la enfermedad
 			cands := []string{}
@@ -444,7 +466,9 @@ func handleDiagnose(w http.ResponseWriter, r *http.Request) {
 				}
 				// enf_contra_medicamento(Enf, Med)
 				if !bad {
-					if q, err := p.Query(fmt.Sprintf(`enf_contra_medicamento(%s,%s).`, safeAtom(enfID), safeAtom(cand))); err == nil {
+					if q, err := p.Query(fmt.Sprintf(
+						`enf_contra_medicamento(%s,%s).`, safeAtom(enfID), safeAtom(cand),
+					)); err == nil {
 						if q.Next() {
 							bad = true
 						}
@@ -491,7 +515,7 @@ func handleDiagnose(w http.ResponseWriter, r *http.Request) {
 	resp.Explanations = "Diagnóstico realizado con Ichiban Prolog: afinidad/3, urgencia/1 y medicamento_seguro/2."
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 /* ===========================================================
@@ -700,6 +724,159 @@ func handleDebugRules(w http.ResponseWriter, r *http.Request) {
 		"ok":     true,
 		"size":   len(rules),
 		"notice": "rules.pl loaded and parsed OK",
+	})
+}
+
+
+
+
+// Depura afinidad: lista Reqs, Matched (S,P), Puntaje, Max, Afinidad
+func handleDebugAfinidad(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	enf := r.URL.Query().Get("id")
+	if enf == "" {
+		http.Error(w, "missing ?id=<enfermedad>", http.StatusBadRequest)
+		return
+	}
+
+	// Lee body como en /api/diagnose para asertar presentes/alergias/crónicas
+	var req DiagnoseReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+
+	// Carga rules + KB
+	rules, err := readRules()
+	if err != nil {
+		http.Error(w, "rules.pl not found", http.StatusInternalServerError)
+		return
+	}
+	kb, err := readKB()
+	if err != nil {
+		http.Error(w, "kb not found", http.StatusInternalServerError)
+		return
+	}
+
+	p := iprolog.New(nil, nil)
+	if err := p.Exec(string(rules)); err != nil {
+		http.Error(w, "rules exec error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := p.Exec(string(kb)); err != nil {
+		http.Error(w, "kb exec error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Asertar hechos de sesión (limpiando antes)
+	var b strings.Builder
+	b.WriteString("retractall(presente(_, _)).\n")
+	b.WriteString("retractall(alergia(_)).\n")
+	b.WriteString("retractall(cronica(_)).\n")
+
+	normalize := func(sev string) int {
+		sev = strings.ToLower(strings.TrimSpace(sev))
+		if n, err := strconv.Atoi(sev); err == nil && n >= 1 && n <= 3 {
+			return n
+		}
+		switch sev {
+		case "severo":
+			return 3
+		case "moderado":
+			return 2
+		default:
+			return 1
+		}
+	}
+	for _, s := range req.Symptoms {
+		if !s.Present { continue }
+		fmt.Fprintf(&b, "presente(%s,%d).\n", safeAtom(s.ID), normalize(s.Severity))
+	}
+	for _, a := range req.Allergies { fmt.Fprintf(&b, "alergia(%s).\n", safeAtom(a)) }
+	for _, c := range req.Chronics { fmt.Fprintf(&b, "cronica(%s).\n", safeAtom(c)) }
+
+	if err := p.Exec(b.String()); err != nil {
+		http.Error(w, "assert error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Reqs (síntomas requeridos por la enfermedad)
+	reqs := []string{}
+	if q, err := p.Query(fmt.Sprintf(`enf_sintoma(%s,S).`, safeAtom(enf))); err == nil {
+		seen := map[string]struct{}{}
+		for q.Next() {
+			var row struct{ S string }
+			if err := q.Scan(&row); err == nil {
+				if _, ok := seen[row.S]; !ok {
+					reqs = append(reqs, row.S)
+					seen[row.S] = struct{}{}
+				}
+			}
+		}
+		q.Close()
+	}
+
+	// Matched normalizados (S,P) que contaron para el puntaje
+	type mp struct{ S string; P int }
+	matched := []mp{}
+	if q, err := p.Query(fmt.Sprintf(`enf_sintoma(%s,S), presentepeso(S,P).`, safeAtom(enf))); err == nil {
+		seen := map[string]struct{}{}
+		for q.Next() {
+			var row struct{ S string; P int }
+			if err := q.Scan(&row); err == nil {
+				key := row.S
+				if _, ok := seen[key]; !ok {
+					matched = append(matched, mp{S: row.S, P: row.P})
+					seen[key] = struct{}{}
+				}
+			}
+		}
+		q.Close()
+	}
+
+	// Puntaje y máximo (Prolog)
+	puntaje := 0
+	if q, err := p.Query(fmt.Sprintf(`puntaje_enf(%s,P,_).`, safeAtom(enf))); err == nil {
+		if q.Next() {
+			var row struct{ P int }
+			_ = q.Scan(&row)
+			puntaje = row.P
+		}
+		q.Close()
+	}
+	max := 0
+	if q, err := p.Query(fmt.Sprintf(`max_puntaje_enf(%s,M).`, safeAtom(enf))); err == nil {
+		if q.Next() {
+			var row struct{ M int }
+			_ = q.Scan(&row)
+			max = row.M
+		}
+		q.Close()
+	}
+
+	// Afinidad reportada por Prolog (para confirmar)
+	afin := 0
+	if q, err := p.Query(fmt.Sprintf(`afinidad(%s,A,_).`, safeAtom(enf))); err == nil {
+		if q.Next() {
+			var row struct{ A int }
+			_ = q.Scan(&row)
+			afin = row.A
+		}
+		q.Close()
+	}
+
+	// Respuesta
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"id":       enf,
+		"reqs":     reqs,        // todos los síntomas requeridos (denominador)
+		"matched":  matched,     // los que contaron con su peso
+		"puntaje":  puntaje,     // suma de pesos
+		"max":      max,         // 3 * #reqs
+		"afinidad": afin,        // round(puntaje*100/max)
 	})
 }
 

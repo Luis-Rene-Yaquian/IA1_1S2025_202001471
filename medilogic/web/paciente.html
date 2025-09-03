@@ -170,7 +170,7 @@ function collectRequest(){
   document.querySelectorAll('#symRows tr').forEach(tr=>{
     const id = tr.dataset.id;
     const present = tr.querySelector('input[type="checkbox"]').checked;
-    const severity = tr.querySelector('select').value;
+    const severity = (tr.querySelector('select').value || 'leve'); // <-- fallback a leve
     symptoms.push({ id, present, severity });
   });
   const allergies = (document.getElementById('allergies').value||'')
@@ -334,6 +334,15 @@ document.getElementById('btnRefresh').addEventListener('click', loadSymptoms);
 document.getElementById('analyze').addEventListener('click', diagnose);
 document.getElementById('clearHist').addEventListener('click', ()=>{ sessionStorage.removeItem('hist'); renderHistory(); });
 document.getElementById('savePdf').addEventListener('click', savePdf);
+
+/* NUEVO: si el usuario cambia la severidad, auto-marcamos el síntoma como presente */
+document.addEventListener('change', (e)=>{
+  if (e.target && e.target.tagName === 'SELECT' && e.target.id.startsWith('sev-')) {
+    const id = e.target.id.replace('sev-','');
+    const chk = document.getElementById('chk-' + id);
+    if (chk && !chk.checked) chk.checked = true;
+  }
+});
 </script>
 </body>
 </html>
