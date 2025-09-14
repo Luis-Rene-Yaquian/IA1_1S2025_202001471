@@ -1,0 +1,17 @@
+MediLogic — RPA Carga de Enfermedades
+Fecha: Sun, 14 Sep 2025 17:34:07 CST
+
+Total enfermedades cargadas: 2
+
+- Gripe (gripe)
+  Sistema: respiratorio | Tipo: viral
+  Desc: Infección respiratoria alta.
+  Síntomas: fiebre, tos, dolor_garganta
+  ContraMeds: ibuprofeno
+
+- Enfermedad por reflujo gastroesofágico (reflujo)
+  Sistema: digestivo | Tipo: cronico
+  Desc: Irritación por ácido.
+  Síntomas: pirosis, regurgitacion
+  ContraMeds: aines
+

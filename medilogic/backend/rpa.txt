@@ -1,0 +1,15 @@
+ID: gripe
+Nombre: Gripe
+Sistema: respiratorio
+Tipo: viral
+Descripcion: Infección respiratoria alta.
+Sintomas: fiebre, tos, dolor_garganta
+ContraMeds: ibuprofeno
+
+ID: reflujo
+Nombre: Enfermedad por reflujo gastroesofágico
+Sistema: digestivo
+Tipo: cronico
+Descripcion: Irritación por ácido.
+Sintomas: pirosis, regurgitacion
+ContraMeds: aines

@@ -1,29 +1,21 @@
-% ======= MediLogic KB (auto-generado) =======
-% NO editar a mano; use /admin/kb
-
-sintoma(diarrea).
-sintoma(disnea).
-sintoma(dolor_garganta).
-sintoma(dolor_pecho).
-sintoma(fatiga).
+% ==== KB generada por RPA ====
+sintoma(pirosis).
+sintoma(regurgitacion).
 sintoma(fiebre).
 sintoma(tos).
+sintoma(dolor_garganta).
 
-enfermedad(faringitis, "faringitis", respiratorio, bacteriano).
-enfermedad(gripe, "gripe", respiratorio, viral).
-enf_sintoma(faringitis, dolor_garganta).
-enf_sintoma(faringitis, fiebre).
+enfermedad(gripe, "Gripe", respiratorio, viral).
+enfermedad(reflujo, "Enfermedad por reflujo gastroesofágico", digestivo, cronico).
+descripcion_enf(gripe, "Infección respiratoria alta.").
+descripcion_enf(reflujo, "Irritación por ácido.").
 enf_sintoma(gripe, fiebre).
 enf_sintoma(gripe, tos).
-enf_sintoma(gripe, fatiga).
+enf_sintoma(gripe, dolor_garganta).
+enf_sintoma(reflujo, pirosis).
+enf_sintoma(reflujo, regurgitacion).
+enf_contra_medicamento(gripe, ibuprofeno).
+enf_contra_medicamento(reflujo, aines).
 
-medicamento(amoxicilina).
 medicamento(ibuprofeno).
-medicamento(paracetamol).
-trata(amoxicilina, faringitis).
-trata(ibuprofeno, gripe).
-trata(paracetamol, gripe).
-contraindicado(amoxicilina, alergia_penicilina).
-contraindicado(amoxicilina, ulcera_gastrica).
-contraindicado(ibuprofeno, ulcera_gastrica).
-contraindicado(paracetamol, alergia_paracetamol).
+medicamento(aines).
