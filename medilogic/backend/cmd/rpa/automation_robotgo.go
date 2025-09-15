@@ -124,6 +124,16 @@ func fillField(x, y int, value string, label string) {
 	sleep(DZ_AFTER_FIELD_WAIT_MS)
 }
 
+// Función para hacer scroll hacia abajo con la ruedita del mouse
+func scrollDown(clicks int) {
+	fmt.Printf("  -> Haciendo scroll hacia abajo (%d clicks)...\n", clicks)
+	for i := 0; i < clicks; i++ {
+		robotgo.Scroll(0, -1) // Scroll hacia abajo (Y negativo)
+		robotgo.MilliSleep(150)
+	}
+	robotgo.MilliSleep(250) // Pausa extra después del scroll
+}
+
 // Nueva función para agregar elementos que requieren ENTER (síntomas y medicamentos)
 func addWithEnter(x, y int, value string, label string) {
 	fmt.Printf("  -> Agregando %s: %s\n", label, value)
@@ -195,6 +205,9 @@ func runAutomation(host string, recs []Disease) {
 		if strings.TrimSpace(d.Desc) != "" {
 			fillField(DZ_DESC_X, DZ_DESC_Y, d.Desc, "Descripción")
 		}
+
+		// Hacer scroll hacia abajo para acceder a síntomas asociados y medicamentos
+		scrollDown(3) // Ajusta el número según sea necesario
 
 		// Agregar síntomas asociados (presionando ENTER para cada uno)
 		if len(d.Symptoms) > 0 {
