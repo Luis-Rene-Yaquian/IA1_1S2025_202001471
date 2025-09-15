@@ -1,3 +1,4 @@
+//go:build rpa
 package main
 
 import (
@@ -8,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 )

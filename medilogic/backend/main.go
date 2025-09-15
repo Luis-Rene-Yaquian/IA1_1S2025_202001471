@@ -1,3 +1,4 @@
+//go:build !rpa
 package main
 
 import (
