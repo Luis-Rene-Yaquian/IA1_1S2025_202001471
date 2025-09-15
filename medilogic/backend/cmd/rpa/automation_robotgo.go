@@ -65,11 +65,18 @@ const (
 	DZ_ENTER_WAIT_MS       = 200
 )
 
-/* ===== MEDICAMENTOS (usar coordenadas estimadas) ===== */
+/* ===== MEDICAMENTOS (COORDENADAS EXACTAS CORREGIDAS) ===== */
 const (
-	// Estimación de coordenadas para la sección de medicamentos
-	MED_ID_X = 900  // Similar a enfermedades
-	MED_ID_Y = 1200 // Más abajo, aproximado
+	// Coordenadas exactas basadas en tus mediciones
+	MED_ID_COORD_X = 840  // Promedio de tus coordenadas X
+	MED_ID_COORD_Y = 600  // Promedio de tus coordenadas Y
+	
+	// Delays específicos para medicamentos
+	MED_TYPE_DELAY_MS       = 45
+	MED_AFTER_FIELD_WAIT_MS = 150
+	MED_AFTER_SAVE_WAIT_MS  = 400
+	MED_ENTER_WAIT_MS       = 250
+	MED_TAB_WAIT_MS         = 300
 )
 
 /* ===== WinAPI clicks (fiables con multi-monitor/DPI) ===== */
@@ -141,6 +148,13 @@ func scrollDown(clicks int) {
 	robotgo.MilliSleep(250) // Pausa extra después del scroll
 }
 
+// Función para hacer TAB con debug y espera ajustable
+func tabWithDebug(label string, waitMs int) {
+	fmt.Printf("  -> TAB a %s...\n", label)
+	robotgo.KeyTap("tab")
+	sleep(waitMs)
+}
+
 // Nueva función para agregar elementos que requieren ENTER (síntomas y medicamentos)
 func addWithEnter(x, y int, value string, label string) {
 	fmt.Printf("  -> Agregando %s: %s\n", label, value)
@@ -172,7 +186,7 @@ func runAutomation(host string, recs []Disease) {
 	robotgo.KeyTap("home", "ctrl")
 	sleep(300)
 
-	/* 4) SÍNTOMAS — crear/actualizar IDs únicos */
+	/* 4) SÍNTOMAS – crear/actualizar IDs únicos */
 	fmt.Println("[SYM] Creando/actualizando SÍNTOMAS…")
 	symset := map[string]struct{}{}
 	for _, d := range recs {
@@ -192,7 +206,7 @@ func runAutomation(host string, recs []Disease) {
 	}
 	fmt.Println("[SYM] OK.")
 
-	/* 5) ENFERMEDADES — Usando coordenadas + TAB para navegación */
+	/* 5) ENFERMEDADES – Usando coordenadas + TAB para navegación */
 	fmt.Println("[DZ] Creando/actualizando ENFERMEDADES...")
 	
 	for i, d := range recs {
@@ -258,7 +272,7 @@ func runAutomation(host string, recs []Disease) {
 	
 	fmt.Println("\n[DZ] OK - Todas las enfermedades procesadas.")
 
-	/* 6) MEDICAMENTOS — Continuar desde donde terminamos con TAB */
+	/* 6) MEDICAMENTOS – FLUJO CORREGIDO CON COORDENADAS EXACTAS */
 	fmt.Println("[MED] Creando/actualizando MEDICAMENTOS...")
 	
 	// Crear set único de medicamentos desde ContraMeds de las enfermedades
@@ -271,65 +285,108 @@ func runAutomation(host string, recs []Disease) {
 
 	if len(medset) > 0 {
 		count := 0
+		isFirstMedication := true
+		
 		for med := range medset {
 			count++
 			fmt.Printf("\n[MED] Procesando medicamento %d/%d: %s\n", count, len(medset), med)
 			
-			// Desde el botón Guardar de enfermedades, hacer 2 TABs para llegar al ID de medicamentos
-			fmt.Printf("  -> Navegando al ID de medicamento (2 TABs desde Guardar)...\n")
-			robotgo.KeyTap("tab")  // TAB 1: Eliminar
-			sleep(200)
-			robotgo.KeyTap("tab")  // TAB 2: ID medicamento
-			sleep(300)
+			// RESETEO DE NAVEGACIÓN PARA CADA MEDICAMENTO
+			if isFirstMedication {
+				// Para el primer medicamento, venir desde el botón Guardar de enfermedades
+				fmt.Printf("  -> Primer medicamento: navegando desde Guardar de enfermedades...\n")
+				robotgo.KeyTap("tab")  // TAB 1: Eliminar enfermedad
+				sleep(200)
+				robotgo.KeyTap("tab")  // TAB 2: ID medicamento
+				sleep(MED_TAB_WAIT_MS)
+				isFirstMedication = false
+			} else {
+				// Para medicamentos siguientes: CLICK DIRECTO en el campo ID
+				fmt.Printf("  -> Medicamento %d: reseteo con click directo en campo ID...\n", count)
+				
+				// Asegurar scroll hacia abajo para que el campo esté visible
+				fmt.Printf("  -> Asegurando scroll hacia medicamentos...\n")
+				robotgo.Scroll(0, -3) // Scroll hacia abajo
+				sleep(300)
+				
+				// Click directo en el campo ID de medicamentos
+				fmt.Printf("  -> Click directo en campo ID (X=%d, Y=%d)...\n", MED_ID_COORD_X, MED_ID_COORD_Y)
+				focusHardWin(MED_ID_COORD_X, MED_ID_COORD_Y)
+				sleep(400)
+			}
 			
-			// Escribir ID del medicamento
+			// Limpiar y escribir ID del medicamento
 			fmt.Printf("  -> Escribiendo ID medicamento: %s\n", med)
-			typeInFocused(med, DZ_TYPE_DELAY_MS)
+			clearInputLocal()
+			robotgo.TypeStrDelay(med, MED_TYPE_DELAY_MS)
+			sleep(MED_AFTER_FIELD_WAIT_MS)
 			
-			// TAB para ir a "Trata (enfermedades)"
-			fmt.Printf("  -> TAB a campo 'Trata (enfermedades)'...\n")
-			robotgo.KeyTap("tab")
-			sleep(300)
+			// TAB para ir al campo "Etiqueta"
+			tabWithDebug("campo Etiqueta", MED_TAB_WAIT_MS)
 			
-			// Agregar enfermedades que este medicamento trata (igual que síntomas/medicamentos de enfermedades)
+			// Escribir etiqueta (usar mismo ID como etiqueta)
+			fmt.Printf("  -> Escribiendo etiqueta: %s\n", med)
+			clearInputLocal()
+			robotgo.TypeStrDelay(med, MED_TYPE_DELAY_MS)
+			sleep(MED_AFTER_FIELD_WAIT_MS)
+			
+			// TAB para ir al campo "Trata (enfermedades)"
+			tabWithDebug("campo 'Trata (enfermedades)'", MED_TAB_WAIT_MS)
+			
+			// Limpiar el campo "Trata"
+			clearInputLocal()
+			
+			// Buscar y agregar enfermedades que contraindican este medicamento
+			fmt.Printf("  -> Buscando enfermedades que contraindican %s...\n", med)
+			treatedCount := 0
 			for _, d := range recs {
 				for _, contraMed := range d.ContraMeds {
 					if contraMed == med {
-						fmt.Printf("    - Agregando enfermedad que trata: %s\n", d.ID)
-						typeInFocused(d.ID, DZ_TYPE_DELAY_MS)
+						treatedCount++
+						fmt.Printf("    -> Agregando enfermedad: %s\n", d.ID)
+						robotgo.TypeStrDelay(d.ID, MED_TYPE_DELAY_MS)
 						robotgo.KeyTap("enter")
-						sleep(DZ_ENTER_WAIT_MS)
-						break // Solo agregar una vez por enfermedad
+						sleep(MED_ENTER_WAIT_MS)
+						break // Solo una vez por enfermedad
 					}
 				}
 			}
 			
-			// TAB para ir a "Contra (alergias/condiciones)" (funciona igual que Trata)
-			fmt.Printf("  -> TAB a campo 'Contra (alergias/condiciones)'...\n")
-			robotgo.KeyTap("tab")
-			sleep(300)
+			if treatedCount == 0 {
+				fmt.Printf("    -> ADVERTENCIA: No se encontraron enfermedades para este medicamento\n")
+			} else {
+				fmt.Printf("    -> Total enfermedades agregadas: %d\n", treatedCount)
+			}
 			
-			// Dejar vacío por ahora (se puede agregar después si hay datos)
-			fmt.Printf("    - Campo 'Contra' dejado vacío\n")
+			// TAB para ir al campo "Contra (alergias/condiciones)"
+			tabWithDebug("campo 'Contra (alergias/condiciones)'", MED_TAB_WAIT_MS)
 			
-			// TAB para ir al botón Guardar
-			fmt.Printf("  -> TAB al botón Guardar...\n")
-			robotgo.KeyTap("tab")
-			sleep(200)
+			// Limpiar campo "Contra" y dejarlo vacío
+			clearInputLocal()
+			fmt.Printf("    -> Campo 'Contra' dejado vacío\n")
 			
-			// ENTER para guardar
+			// TAB para ir al botón "Guardar"
+			tabWithDebug("botón Guardar", 200)
+			
+			// ENTER para guardar el medicamento
 			fmt.Printf("  -> ENTER para guardar medicamento\n")
 			robotgo.KeyTap("enter")
-			sleep(DZ_AFTER_SAVE_WAIT_MS)
+			sleep(MED_AFTER_SAVE_WAIT_MS)
 			
-			fmt.Printf("  ✓ Medicamento %s guardado\n", med)
+			fmt.Printf("  ✅ Medicamento %s procesado correctamente\n", med)
+			
+			// Espera adicional entre medicamentos para estabilización
+			if count < len(medset) {
+				fmt.Printf("  -> Pausa entre medicamentos...\n")
+				sleep(600) // Pausa más larga para asegurar que el sistema se estabilice
+			}
 		}
-		fmt.Printf("\n[MED] OK - %d medicamentos procesados.\n", len(medset))
+		fmt.Printf("\n[MED] ✅ COMPLETADOS %d medicamentos exitosamente.\n", len(medset))
 	} else {
 		fmt.Println("[MED] No hay medicamentos para procesar.")
 	}
 	
-	fmt.Println("[OK] Flujo completado: síntomas, enfermedades y medicamentos.")
+	fmt.Println("\n[🎉] FLUJO TOTALMENTE COMPLETADO: síntomas, enfermedades y medicamentos.")
 }
 
 /* ===== util ===== */

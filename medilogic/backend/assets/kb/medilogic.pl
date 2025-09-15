@@ -1,9 +1,9 @@
 % ==== KB generada por RPA ====
+sintoma(fiebre).
+sintoma(tos).
 sintoma(dolor_garganta).
 sintoma(pirosis).
 sintoma(regurgitacion).
-sintoma(fiebre).
-sintoma(tos).
 
 enfermedad(gripe, "Gripe", respiratorio, viral).
 enfermedad(reflujo, "Enfermedad por reflujo gastroesofágico", digestivo, cronico).
