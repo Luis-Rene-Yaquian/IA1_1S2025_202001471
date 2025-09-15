@@ -238,9 +238,11 @@ func runAutomation(host string, recs []Disease) {
 			}
 		}
 
-		// Guardar
-		fmt.Printf("  -> Guardando enfermedad...\n")
-		winClick(DZ_SAVE_X, DZ_SAVE_Y)
+		// Navegar con TAB al botón Guardar y presionar ENTER
+		fmt.Printf("  -> Navegando al botón Guardar...\n")
+		robotgo.KeyTap("tab")
+		sleep(200)
+		robotgo.KeyTap("enter")  // Presionar el botón Guardar
 		sleep(DZ_AFTER_SAVE_WAIT_MS)
 		
 		// Verificación visual opcional
