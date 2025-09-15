@@ -1,9 +1,9 @@
 % ==== KB generada por RPA ====
-sintoma(regurgitacion).
 sintoma(fiebre).
 sintoma(tos).
 sintoma(dolor_garganta).
 sintoma(pirosis).
+sintoma(regurgitacion).
 
 enfermedad(gripe, "Gripe", respiratorio, viral).
 enfermedad(reflujo, "Enfermedad por reflujo gastroesofágico", digestivo, cronico).
@@ -17,5 +17,5 @@ enf_sintoma(reflujo, regurgitacion).
 enf_contra_medicamento(gripe, ibuprofeno).
 enf_contra_medicamento(reflujo, aines).
 
-medicamento(aines).
 medicamento(ibuprofeno).
+medicamento(aines).
