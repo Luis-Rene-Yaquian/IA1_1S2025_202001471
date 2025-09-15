@@ -128,7 +128,7 @@ func fillField(x, y int, value string, label string) {
 func scrollDown(clicks int) {
 	fmt.Printf("  -> Haciendo scroll hacia abajo (%d clicks)...\n", clicks)
 	for i := 0; i < clicks; i++ {
-		robotgo.Scroll(0, -1) // Scroll hacia abajo (Y negativo)
+		robotgo.Scroll(0, -3) // Scroll hacia abajo (Y negativo)
 		robotgo.MilliSleep(150)
 	}
 	robotgo.MilliSleep(250) // Pausa extra después del scroll
@@ -206,22 +206,35 @@ func runAutomation(host string, recs []Disease) {
 			fillField(DZ_DESC_X, DZ_DESC_Y, d.Desc, "Descripción")
 		}
 
-		// Hacer scroll hacia abajo para acceder a síntomas asociados y medicamentos
-		scrollDown(3) // Ajusta el número según sea necesario
+		// Navegar con TAB desde descripción hasta síntomas asociados
+		fmt.Printf("  -> Navegando a síntomas asociados...\n")
+		robotgo.KeyTap("tab")
+		sleep(300)
 
-		// Agregar síntomas asociados (presionando ENTER para cada uno)
+		// Agregar síntomas asociados (ya está enfocado el campo)
 		if len(d.Symptoms) > 0 {
 			fmt.Printf("  -> Agregando %d síntomas...\n", len(d.Symptoms))
 			for _, symptom := range d.Symptoms {
-				addWithEnter(DZ_SYM_ADD_X, DZ_SYM_ADD_Y, symptom, "síntoma")
+				fmt.Printf("    - Agregando síntoma: %s\n", symptom)
+				typeInFocused(symptom, DZ_TYPE_DELAY_MS)
+				robotgo.KeyTap("enter")
+				sleep(DZ_ENTER_WAIT_MS)
 			}
 		}
 
-		// Agregar medicamentos contraindicados (presionando ENTER para cada uno)
+		// Navegar con TAB desde síntomas a medicamentos contraindicados
+		fmt.Printf("  -> Navegando a medicamentos contraindicados...\n")
+		robotgo.KeyTap("tab")
+		sleep(300)
+
+		// Agregar medicamentos contraindicados (ya está enfocado el campo)
 		if len(d.ContraMeds) > 0 {
 			fmt.Printf("  -> Agregando %d medicamentos contraindicados...\n", len(d.ContraMeds))
 			for _, med := range d.ContraMeds {
-				addWithEnter(DZ_CONTRA_X, DZ_CONTRA_Y, med, "medicamento contraindicado")
+				fmt.Printf("    - Agregando medicamento: %s\n", med)
+				typeInFocused(med, DZ_TYPE_DELAY_MS)
+				robotgo.KeyTap("enter")
+				sleep(DZ_ENTER_WAIT_MS)
 			}
 		}
 
