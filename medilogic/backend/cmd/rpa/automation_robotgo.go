@@ -13,7 +13,7 @@ import (
 )
 
 /* ==============================
-   Login + SÍNTOMAS (OK) + ENFERMEDADES (Coordenadas específicas para cada campo)
+   Login + SÍNTOMAS (OK) + ENFERMEDADES (TAB) + MEDICAMENTOS (TAB)
    ============================== */
 
 const (
@@ -47,22 +47,29 @@ const (
 	DZ_DESC_X   = 900  // Campo Descripción
 	DZ_DESC_Y   = 826
 	
-	// Campo de síntomas asociados (donde hay que presionar enter)
-	DZ_SYM_ADD_X = 860  // Promedio de tus coordenadas para síntomas
-	DZ_SYM_ADD_Y = 621
+	// Campo de síntomas asociados (coordenadas DESPUÉS del scroll)
+	DZ_SYM_ADD_X = 855  // Promedio de tus nuevas coordenadas post-scroll
+	DZ_SYM_ADD_Y = 300
 	
-	// Campo de medicamentos contraindicados (donde hay que presionar enter)
-	DZ_CONTRA_X  = 840  // Promedio de tus coordenadas para medicamentos
-	DZ_CONTRA_Y  = 680
+	// Campo de medicamentos contraindicados (coordenadas DESPUÉS del scroll)
+	DZ_CONTRA_X  = 815  // Promedio de tus nuevas coordenadas post-scroll
+	DZ_CONTRA_Y  = 357
 	
-	DZ_SAVE_X   = 795   // Botón Guardar (promedio de tus coordenadas)
-	DZ_SAVE_Y   = 716
+	DZ_SAVE_X   = 794   // Botón Guardar (promedio actualizado)
+	DZ_SAVE_Y   = 397
 
 	// Delays
 	DZ_TYPE_DELAY_MS       = 45
 	DZ_AFTER_FIELD_WAIT_MS = 150
 	DZ_AFTER_SAVE_WAIT_MS  = 300
 	DZ_ENTER_WAIT_MS       = 200
+)
+
+/* ===== MEDICAMENTOS (usar coordenadas estimadas) ===== */
+const (
+	// Estimación de coordenadas para la sección de medicamentos
+	MED_ID_X = 900  // Similar a enfermedades
+	MED_ID_Y = 1200 // Más abajo, aproximado
 )
 
 /* ===== WinAPI clicks (fiables con multi-monitor/DPI) ===== */
@@ -185,7 +192,7 @@ func runAutomation(host string, recs []Disease) {
 	}
 	fmt.Println("[SYM] OK.")
 
-	/* 5) ENFERMEDADES — Usando coordenadas específicas para cada campo */
+	/* 5) ENFERMEDADES — Usando coordenadas + TAB para navegación */
 	fmt.Println("[DZ] Creando/actualizando ENFERMEDADES...")
 	
 	for i, d := range recs {
@@ -250,7 +257,79 @@ func runAutomation(host string, recs []Disease) {
 	}
 	
 	fmt.Println("\n[DZ] OK - Todas las enfermedades procesadas.")
-	fmt.Println("[OK] Flujo completado: síntomas y enfermedades.")
+
+	/* 6) MEDICAMENTOS — Continuar desde donde terminamos con TAB */
+	fmt.Println("[MED] Creando/actualizando MEDICAMENTOS...")
+	
+	// Crear set único de medicamentos desde ContraMeds de las enfermedades
+	medset := map[string]struct{}{}
+	for _, d := range recs {
+		for _, med := range d.ContraMeds {
+			medset[med] = struct{}{}
+		}
+	}
+
+	if len(medset) > 0 {
+		count := 0
+		for med := range medset {
+			count++
+			fmt.Printf("\n[MED] Procesando medicamento %d/%d: %s\n", count, len(medset), med)
+			
+			// Desde el botón Guardar de enfermedades, hacer 2 TABs para llegar al ID de medicamentos
+			fmt.Printf("  -> Navegando al ID de medicamento (2 TABs desde Guardar)...\n")
+			robotgo.KeyTap("tab")  // TAB 1: Eliminar
+			sleep(200)
+			robotgo.KeyTap("tab")  // TAB 2: ID medicamento
+			sleep(300)
+			
+			// Escribir ID del medicamento
+			fmt.Printf("  -> Escribiendo ID medicamento: %s\n", med)
+			typeInFocused(med, DZ_TYPE_DELAY_MS)
+			
+			// TAB para ir a "Trata (enfermedades)"
+			fmt.Printf("  -> TAB a campo 'Trata (enfermedades)'...\n")
+			robotgo.KeyTap("tab")
+			sleep(300)
+			
+			// Agregar enfermedades que este medicamento trata (igual que síntomas/medicamentos de enfermedades)
+			for _, d := range recs {
+				for _, contraMed := range d.ContraMeds {
+					if contraMed == med {
+						fmt.Printf("    - Agregando enfermedad que trata: %s\n", d.ID)
+						typeInFocused(d.ID, DZ_TYPE_DELAY_MS)
+						robotgo.KeyTap("enter")
+						sleep(DZ_ENTER_WAIT_MS)
+						break // Solo agregar una vez por enfermedad
+					}
+				}
+			}
+			
+			// TAB para ir a "Contra (alergias/condiciones)" (funciona igual que Trata)
+			fmt.Printf("  -> TAB a campo 'Contra (alergias/condiciones)'...\n")
+			robotgo.KeyTap("tab")
+			sleep(300)
+			
+			// Dejar vacío por ahora (se puede agregar después si hay datos)
+			fmt.Printf("    - Campo 'Contra' dejado vacío\n")
+			
+			// TAB para ir al botón Guardar
+			fmt.Printf("  -> TAB al botón Guardar...\n")
+			robotgo.KeyTap("tab")
+			sleep(200)
+			
+			// ENTER para guardar
+			fmt.Printf("  -> ENTER para guardar medicamento\n")
+			robotgo.KeyTap("enter")
+			sleep(DZ_AFTER_SAVE_WAIT_MS)
+			
+			fmt.Printf("  ✓ Medicamento %s guardado\n", med)
+		}
+		fmt.Printf("\n[MED] OK - %d medicamentos procesados.\n", len(medset))
+	} else {
+		fmt.Println("[MED] No hay medicamentos para procesar.")
+	}
+	
+	fmt.Println("[OK] Flujo completado: síntomas, enfermedades y medicamentos.")
 }
 
 /* ===== util ===== */
