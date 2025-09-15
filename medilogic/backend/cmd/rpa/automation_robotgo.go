@@ -69,7 +69,7 @@ const (
 const (
 	// Coordenadas exactas basadas en tus mediciones
 	MED_ID_COORD_X = 840  // Promedio de tus coordenadas X
-	MED_ID_COORD_Y = 600  // Promedio de tus coordenadas Y
+	MED_ID_COORD_Y = 600  // Ajustado por ti desde 630
 	
 	// Delays específicos para medicamentos
 	MED_TYPE_DELAY_MS       = 45
@@ -77,6 +77,13 @@ const (
 	MED_AFTER_SAVE_WAIT_MS  = 400
 	MED_ENTER_WAIT_MS       = 250
 	MED_TAB_WAIT_MS         = 300
+)
+
+/* ===== BOTÓN GUARDAR CAMBIOS FINAL ===== */
+const (
+	// Coordenadas del botón "Guardar cambios" en la parte superior
+	SAVE_CHANGES_X = 1188  // Promedio de tus coordenadas X
+	SAVE_CHANGES_Y = 144   // Promedio de tus coordenadas Y
 )
 
 /* ===== WinAPI clicks (fiables con multi-monitor/DPI) ===== */
@@ -373,7 +380,7 @@ func runAutomation(host string, recs []Disease) {
 			robotgo.KeyTap("enter")
 			sleep(MED_AFTER_SAVE_WAIT_MS)
 			
-			fmt.Printf("  ✅ Medicamento %s procesado correctamente\n", med)
+			fmt.Printf("   Medicamento %s procesado correctamente\n", med)
 			
 			// Espera adicional entre medicamentos para estabilización
 			if count < len(medset) {
@@ -381,12 +388,28 @@ func runAutomation(host string, recs []Disease) {
 				sleep(600) // Pausa más larga para asegurar que el sistema se estabilice
 			}
 		}
-		fmt.Printf("\n[MED] ✅ COMPLETADOS %d medicamentos exitosamente.\n", len(medset))
+		fmt.Printf("\n[MED]  COMPLETADOS %d medicamentos exitosamente.\n", len(medset))
 	} else {
 		fmt.Println("[MED] No hay medicamentos para procesar.")
 	}
 	
 	fmt.Println("\n[🎉] FLUJO TOTALMENTE COMPLETADO: síntomas, enfermedades y medicamentos.")
+	
+	/* 7) GUARDAR CAMBIOS FINAL - Scroll arriba y click en "Guardar cambios" */
+	fmt.Println("\n[SAVE] Guardando cambios finales en la KB...")
+	
+	// Scroll hasta arriba de la página
+	fmt.Printf("  -> Haciendo scroll hasta arriba...\n")
+	robotgo.KeyTap("home", "ctrl")
+	sleep(500)
+	
+	// Click en el botón "Guardar cambios" usando coordenadas exactas
+	fmt.Printf("  -> Click en botón 'Guardar cambios' (X=%d, Y=%d)...\n", SAVE_CHANGES_X, SAVE_CHANGES_Y)
+	winClick(SAVE_CHANGES_X, SAVE_CHANGES_Y)
+	sleep(800) // Esperar a que se procese el guardado
+	
+	fmt.Println("   Cambios guardados exitosamente en medilogic.pl")
+	fmt.Println("\n[] RPA COMPLETADO: Todo el proceso de automatización ha finalizado correctamente.")
 }
 
 /* ===== util ===== */

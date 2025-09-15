@@ -1,9 +1,11 @@
-% ==== KB generada por RPA ====
-sintoma(fiebre).
-sintoma(tos).
+% ======= MediLogic KB (auto-generado) =======
+% NO editar a mano; use /admin/kb
+
 sintoma(dolor_garganta).
+sintoma(fiebre).
 sintoma(pirosis).
 sintoma(regurgitacion).
+sintoma(tos).
 
 enfermedad(gripe, "Gripe", respiratorio, viral).
 enfermedad(reflujo, "Enfermedad por reflujo gastroesofágico", digestivo, cronico).
@@ -17,5 +19,7 @@ enf_sintoma(reflujo, regurgitacion).
 enf_contra_medicamento(gripe, ibuprofeno).
 enf_contra_medicamento(reflujo, aines).
 
-medicamento(ibuprofeno).
 medicamento(aines).
+medicamento(ibuprofeno).
+trata(aines, reflujo).
+trata(ibuprofeno, gripe).
