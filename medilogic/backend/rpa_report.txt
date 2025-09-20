@@ -1,5 +1,5 @@
-MediLogic — RPA Carga de Enfermedades
-Fecha: Mon, 15 Sep 2025 16:09:16 CST
+MediLogic – RPA Carga de Enfermedades
+Fecha: Fri, 19 Sep 2025 17:10:42 CST
 
 Total enfermedades cargadas: 2
 

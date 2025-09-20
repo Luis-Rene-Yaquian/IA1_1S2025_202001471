@@ -62,7 +62,7 @@ func parse(path string) ([]Disease, error) {
 	}
 	defer f.Close()
 
-	var out []Disease
+	var out []Diseaset
 	d := Disease{}
 	flush := func() {
 		if strings.TrimSpace(d.ID) != "" {

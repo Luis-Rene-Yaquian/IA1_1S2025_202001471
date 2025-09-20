@@ -873,7 +873,7 @@ func handleDebugAfinidad(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
 		"id":       enf,
-		"reqs":     reqs,        // todos los síntomas requeridos (denominador)
+		"reqs":     reqs,        // todos los síntomas requeridos (
 		"matched":  matched,     // los que contaron con su peso
 		"puntaje":  puntaje,     // suma de pesos
 		"max":      max,         // 3 * #reqs
